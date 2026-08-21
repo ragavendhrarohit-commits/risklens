@@ -1,0 +1,8 @@
+agent:
+  log_level: info
+  log_file: 'C:\ProgramData\RiskLens\logs\agent.log'
+  shutdown_timeout: 15s
+
+service:
+  name: RiskLensAgent
+  display_name: RiskLens Endpoint Agent

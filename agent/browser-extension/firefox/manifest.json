@@ -1,0 +1,16 @@
+{
+  "manifest_version": 2,
+  "name": "RiskLens Browser Activity",
+  "version": "1.0.0",
+  "description": "Reports the active tab of the focused window to the RiskLens agent. Does not read passwords, cookies, forms, clipboard, downloads, or history.",
+  "permissions": ["tabs", "nativeMessaging", "alarms"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browser-activity@risklens.local",
+      "strict_min_version": "109.0"
+    }
+  }
+}

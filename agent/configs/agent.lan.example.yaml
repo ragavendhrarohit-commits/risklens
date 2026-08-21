@@ -1,0 +1,55 @@
+# Copy this file to Laptop B as agent.yaml.
+# Do not copy identity.json from Laptop A — Laptop B must mint its own agent_id.
+schema_version: 1
+
+general:
+  service_name: RiskLensAgent
+  display_name: RiskLens Endpoint Agent
+  shutdown_timeout: 15s
+
+logging:
+  level: info
+  file: 'C:\ProgramData\RiskLens\logs\agent.log'
+
+storage:
+  state_dir: 'C:\ProgramData\RiskLens\state'
+  identity_file: 'C:\ProgramData\RiskLens\state\identity.json'
+
+networking:
+  backend_url: http://192.168.4.99:8000
+
+registration:
+  enabled: true
+  timeout: 15s
+
+device_upload:
+  enabled: true
+  timeout: 15s
+  interval: 5m
+
+heartbeat:
+  enabled: true
+  timeout: 10s
+  interval: 30s
+
+users:
+  enabled: true
+  timeout: 30s
+  interval: 5m
+
+software:
+  enabled: true
+  timeout: 60s
+  interval: 15m
+
+activity:
+  enabled: true
+  timeout: 15s
+  interval: 15s
+
+browser_activity:
+  enabled: true
+  timeout: 15s
+  interval: 15s
+  chromium_extension_id: ""
+  firefox_extension_id: browser-activity@risklens.local

@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RiskLens</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ["IBM Plex Sans", "Segoe UI", "sans-serif"],
+              mono: ["IBM Plex Mono", "ui-monospace", "monospace"],
+            },
+            colors: {
+              ink: {
+                950: "#07090c",
+                900: "#0c1117",
+                800: "#121821",
+                700: "#18222d",
+                600: "#243140",
+              },
+              mist: {
+                100: "#e8eef4",
+                300: "#9aa8b7",
+                400: "#6f7f90",
+              },
+              signal: "#3ddc97",
+              caution: "#f5a524",
+              critical: "#e5484d",
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <script>
+      // Platform API base (Sprint 10). Override before app.js if needed.
+      window.RISKLENS_PLATFORM_API =
+        window.RISKLENS_PLATFORM_API || "http://127.0.0.1:8000";
+    </script>
+  </head>
+  <body class="bg-ink-950 text-mist-100 font-sans antialiased h-screen overflow-hidden">
+    <div class="flex h-full">
+      <aside class="w-64 shrink-0 bg-ink-900 border-r border-ink-600 flex flex-col">
+        <div class="h-14 px-5 flex items-center gap-3 border-b border-ink-600">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" stroke="#3ddc97" stroke-width="1.6" />
+            <circle cx="12" cy="12" r="4.5" stroke="#e8eef4" stroke-width="1.4" />
+            <circle cx="12" cy="12" r="1.4" fill="#3ddc97" />
+          </svg>
+          <div>
+            <div class="text-[15px] font-semibold tracking-wide leading-none">RiskLens</div>
+            <div class="text-[10px] uppercase tracking-[0.18em] text-mist-400 mt-1">Endpoint platform</div>
+          </div>
+        </div>
+
+        <nav class="flex-1 overflow-y-auto px-3 py-4 space-y-6">
+          <div>
+            <p class="px-2 mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-mist-400">Platform</p>
+            <ul class="space-y-0.5">
+              <li>
+                <button data-view="dashboard" class="nav-link">
+                  <span>Dashboard</span>
+                </button>
+              </li>
+              <li>
+                <button data-view="fleet" class="nav-link nav-link-active">
+                  <span>Fleet</span>
+                </button>
+              </li>
+              <li>
+                <button data-view="alerts" class="nav-link">
+                  <span>Alerts</span>
+                </button>
+              </li>
+              <li>
+                <button data-view="incidents" class="nav-link">
+                  <span>Incidents</span>
+                </button>
+              </li>
+              <li>
+                <button data-view="reports" class="nav-link">
+                  <span>Reports</span>
+                </button>
+              </li>
+              <li>
+                <button data-view="policies" class="nav-link">
+                  <span>Policies</span>
+                </button>
+              </li>
+              <li>
+                <button data-view="administration" class="nav-link">
+                  <span>Administration</span>
+                </button>
+              </li>
+              <li>
+                <button data-view="settings" class="nav-link">
+                  <span>Settings</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </nav>
+
+        <div class="px-4 py-4 border-t border-ink-600 text-[11px] text-mist-400 leading-relaxed">
+          Company → Groups → Computer. Fleet is the center of the platform.
+        </div>
+      </aside>
+
+      <div class="flex-1 min-w-0 flex flex-col">
+        <header class="h-14 shrink-0 border-b border-ink-600 bg-ink-900/80 px-5 flex items-center gap-4">
+          <form id="global-search-form" class="flex-1 max-w-xl">
+            <label class="sr-only" for="global-search">Global search</label>
+            <input
+              id="global-search"
+              type="search"
+              disabled
+              placeholder="Global search will be enabled after Sprint 14."
+              class="w-full h-9 rounded-md bg-ink-800 border border-ink-600 px-3 text-sm placeholder:text-mist-400 focus:outline-none focus:border-signal opacity-50 cursor-not-allowed"
+            />
+          </form>
+          <div id="platform-status" class="text-xs text-mist-400 whitespace-nowrap">RiskLens Platform</div>
+        </header>
+
+        <div id="error-banner" class="hidden bg-critical/15 text-critical text-xs px-5 py-2 border-b border-critical/30"></div>
+
+        <main class="flex-1 overflow-y-auto p-6">
+          <section id="view-dashboard" class="view hidden">
+            <div class="mb-5">
+              <h1 class="text-xl font-semibold">Dashboard</h1>
+              <p class="text-sm text-mist-400 mt-1">
+                Company posture. Live cards reuse Fleet summary. Monitoring widgets are reserved for later sprints.
+              </p>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 mb-4">
+              <article class="stat-card"><div class="stat-label">Fleet Summary</div><div class="stat-value" id="dash-card-total">—</div></article>
+              <article class="stat-card"><div class="stat-label">Online Devices</div><div class="stat-value" id="dash-card-online">—</div></article>
+              <article class="stat-card"><div class="stat-label">Offline Devices</div><div class="stat-value" id="dash-card-offline">—</div></article>
+              <article class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" id="dash-card-warning">—</div></article>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Compliance</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Recent Activity</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Alerts</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Top Applications</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Top Installed Applications</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Policy Status</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+            </div>
+          </section>
+
+          <section id="view-users" class="view hidden">
+            <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <p class="text-[11px] uppercase tracking-wide text-mist-400 mb-1">Reports · Inventory</p>
+                <h1 class="text-xl font-semibold">Account Inventory</h1>
+                <p class="text-sm text-mist-400 mt-1">
+                  Live Windows local account inventory from registered agents. Organization-wide search across every endpoint. Primary account view is Fleet → Computer → Accounts.
+                </p>
+              </div>
+              <button
+                type="button"
+                id="users-refresh"
+                class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-100 hover:border-signal"
+              >
+                Refresh
+              </button>
+            </div>
+
+            <form id="users-filters" class="panel mb-4 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="filter-user-username">Username</label>
+                <input id="filter-user-username" name="username" type="search" class="device-input" placeholder="Filter username" />
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="filter-user-account-type">Account type</label>
+                <input id="filter-user-account-type" name="account_type" type="search" class="device-input" placeholder="Local / Administrator" />
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="filter-user-enabled">Enabled</label>
+                <select id="filter-user-enabled" name="enabled" class="device-input">
+                  <option value="">Any</option>
+                  <option value="true">Enabled</option>
+                  <option value="false">Disabled</option>
+                </select>
+              </div>
+              <div class="flex gap-2">
+                <button type="submit" class="h-9 flex-1 rounded-md bg-signal/15 border border-signal/40 text-sm text-signal hover:bg-signal/25">
+                  Search
+                </button>
+                <button type="button" id="users-clear-filters" class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-300">
+                  Clear
+                </button>
+              </div>
+            </form>
+
+            <div id="users-status" class="text-xs text-mist-400 mb-3" aria-live="polite"></div>
+
+            <div class="panel overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-left text-mist-400 text-xs uppercase tracking-wide">
+                  <tr>
+                    <th class="py-2 pr-3 font-medium">
+                      <button type="button" class="user-sort" data-sort="username">Username</button>
+                    </th>
+                    <th class="py-2 pr-3 font-medium">
+                      <button type="button" class="user-sort" data-sort="machine_name">Computer</button>
+                    </th>
+                    <th class="py-2 pr-3 font-medium">Current User</th>
+                    <th class="py-2 pr-3 font-medium">Department</th>
+                    <th class="py-2 pr-3 font-medium">Group</th>
+                    <th class="py-2 pr-3 font-medium">
+                      <button type="button" class="user-sort" data-sort="enabled">Status</button>
+                    </th>
+                    <th class="py-2 font-medium">
+                      <button type="button" class="user-sort" data-sort="last_logon">Last Seen</button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody id="users-body" class="divide-y divide-ink-600">
+                  <tr><td colspan="7" class="py-8 text-center text-mist-400">Open Account Inventory from Reports to search Windows accounts across the company.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <p id="users-page-info" class="text-xs text-mist-400">—</p>
+              <div class="flex items-center gap-2">
+                <button type="button" id="users-prev" class="device-page-btn" disabled>Previous</button>
+                <button type="button" id="users-next" class="device-page-btn" disabled>Next</button>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-fleet" class="view">
+            <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h1 class="text-xl font-semibold">Fleet</h1>
+                <p class="text-sm text-mist-400 mt-1">
+                  Every managed endpoint. Click a row to open that computer.
+                </p>
+              </div>
+              <button
+                type="button"
+                id="fleet-refresh"
+                class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-100 hover:border-signal"
+              >
+                Refresh
+              </button>
+            </div>
+
+            <div id="fleet-summary" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-4">
+              <article class="stat-card"><div class="stat-label">Total Agents</div><div class="stat-value" id="fleet-card-total">—</div></article>
+              <article class="stat-card"><div class="stat-label">Online</div><div class="stat-value" id="fleet-card-online">—</div></article>
+              <article class="stat-card"><div class="stat-label">Offline</div><div class="stat-value" id="fleet-card-offline">—</div></article>
+              <article class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" id="fleet-card-warning">—</div></article>
+              <article class="stat-card"><div class="stat-label">Never Seen</div><div class="stat-value" id="fleet-card-never-seen">—</div></article>
+              <article class="stat-card"><div class="stat-label">Healthy</div><div class="stat-value" id="fleet-card-healthy">—</div></article>
+            </div>
+
+            <form id="fleet-filters" class="panel mb-4 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="filter-fleet-q">Search</label>
+                <input id="filter-fleet-q" name="q" type="search" class="device-input" placeholder="Hostname, machine, agent ID" />
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="filter-fleet-status">Status</label>
+                <select id="filter-fleet-status" name="status" class="device-input">
+                  <option value="">Any</option>
+                  <option value="online">Online</option>
+                  <option value="warning">Warning</option>
+                  <option value="offline">Offline</option>
+                  <option value="never_seen">Never Seen</option>
+                  <option value="healthy">Healthy</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="filter-fleet-tag">Tag</label>
+                <select id="filter-fleet-tag" name="tag" class="device-input">
+                  <option value="">Any</option>
+                  <option value="Finance">Finance</option>
+                  <option value="HR">HR</option>
+                  <option value="Production">Production</option>
+                  <option value="Development">Development</option>
+                  <option value="Servers">Servers</option>
+                  <option value="Lab">Lab</option>
+                </select>
+              </div>
+              <div class="flex gap-2">
+                <button type="submit" class="h-9 flex-1 rounded-md bg-signal/15 border border-signal/40 text-sm text-signal hover:bg-signal/25">
+                  Search
+                </button>
+                <button type="button" id="fleet-clear-filters" class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-300">
+                  Clear
+                </button>
+              </div>
+            </form>
+
+            <div id="fleet-status" class="text-xs text-mist-400 mb-3" aria-live="polite"></div>
+
+            <div class="panel overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-left text-mist-400 text-xs uppercase tracking-wide">
+                  <tr>
+                    <th class="py-2 pr-3 font-medium"><button type="button" class="fleet-sort" data-sort="hostname">Hostname</button></th>
+                    <th class="py-2 pr-3 font-medium"><button type="button" class="fleet-sort" data-sort="current_user">Current Account</button></th>
+                    <th class="py-2 pr-3 font-medium"><button type="button" class="fleet-sort" data-sort="operating_system">Operating System</button></th>
+                    <th class="py-2 pr-3 font-medium"><button type="button" class="fleet-sort" data-sort="online_status">Status</button></th>
+                    <th class="py-2 pr-3 font-medium"><button type="button" class="fleet-sort" data-sort="last_seen">Last Seen</button></th>
+                    <th class="py-2 pr-3 font-medium"><button type="button" class="fleet-sort" data-sort="policy_name">Policy</button></th>
+                    <th class="py-2 pr-3 font-medium">Group</th>
+                    <th class="py-2 font-medium">Tags</th>
+                  </tr>
+                </thead>
+                <tbody id="fleet-body" class="divide-y divide-ink-600">
+                  <tr><td colspan="8" class="py-8 text-center text-mist-400">Loading fleet…</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <p id="fleet-page-info" class="text-xs text-mist-400">—</p>
+              <div class="flex items-center gap-2">
+                <button type="button" id="fleet-prev" class="device-page-btn" disabled>Previous</button>
+                <button type="button" id="fleet-next" class="device-page-btn" disabled>Next</button>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-fleet-detail" class="view hidden">
+            <div class="mb-4">
+              <button type="button" id="fleet-detail-back" class="text-sm text-signal hover:underline">← Back to Fleet</button>
+              <h1 class="text-xl font-semibold mt-3" id="fleet-detail-title">Agent</h1>
+              <p class="text-sm text-mist-400 mt-1 font-mono" id="fleet-detail-subtitle"></p>
+            </div>
+            <div id="fleet-detail-tabs" class="mb-4 space-y-3">
+              <div class="fleet-tab-group" data-group="inventory">
+                <p class="fleet-tab-group-label">Inventory</p>
+                <div class="flex flex-wrap gap-1">
+                  <button type="button" class="fleet-tab fleet-tab-active" data-tab="overview">Overview</button>
+                  <button type="button" class="fleet-tab" data-tab="accounts">Accounts</button>
+                  <button type="button" class="fleet-tab" data-tab="software">Installed Applications</button>
+                  <button type="button" class="fleet-tab" data-tab="processes">Processes</button>
+                  <button type="button" class="fleet-tab" data-tab="services">Services</button>
+                  <button type="button" class="fleet-tab" data-tab="network">Network</button>
+                  <button type="button" class="fleet-tab" data-tab="policies">Policies</button>
+                  <button type="button" class="fleet-tab" data-tab="health">Health</button>
+                </div>
+              </div>
+              <div class="fleet-tab-group" data-group="activity">
+                <p class="fleet-tab-group-label">Activity</p>
+                <div class="flex flex-wrap gap-1">
+                  <button type="button" class="fleet-tab" data-tab="sessions">Sessions</button>
+                  <button type="button" class="fleet-tab" data-tab="applications">Application Activity</button>
+                  <button type="button" class="fleet-tab" data-tab="browser">Browser Activity</button>
+                  <button type="button" class="fleet-tab" data-tab="timeline">Timeline</button>
+                </div>
+              </div>
+              <div class="fleet-tab-group" data-group="security">
+                <p class="fleet-tab-group-label">Security</p>
+                <div class="flex flex-wrap gap-1">
+                  <button type="button" class="fleet-tab" data-tab="alerts">Alerts</button>
+                  <button type="button" class="fleet-tab" data-tab="detections">Detections</button>
+                  <button type="button" class="fleet-tab" data-tab="response">Response Actions</button>
+                  <button type="button" class="fleet-tab" data-tab="threat-timeline">Threat Timeline</button>
+                </div>
+              </div>
+            </div>
+            <div id="fleet-detail-error" class="device-error hidden mb-3"></div>
+            <div id="fleet-detail-body" class="panel text-sm text-mist-300">Select an endpoint.</div>
+          </section>
+
+          <section id="view-software" class="view hidden">
+            <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <p class="text-[11px] uppercase tracking-wide text-mist-400 mb-1">Reports · Inventory</p>
+                <h1 class="text-xl font-semibold">Software Inventory</h1>
+                <p class="text-sm text-mist-400 mt-1">
+                  Live installed application inventory from registered agents (PostgreSQL). Organization-wide search across every endpoint. Primary view is Fleet → Computer → Installed Applications.
+                </p>
+              </div>
+              <button
+                type="button"
+                id="software-refresh"
+                class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-100 hover:border-signal"
+              >
+                Refresh
+              </button>
+            </div>
+
+            <form id="software-filters" class="panel mb-4 grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="filter-software-name">Application</label>
+                <input id="filter-software-name" name="application_name" type="search" class="device-input" placeholder="Filter application" />
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="filter-software-publisher">Publisher</label>
+                <input id="filter-software-publisher" name="publisher" type="search" class="device-input" placeholder="Filter publisher" />
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="filter-software-version">Version</label>
+                <input id="filter-software-version" name="version" type="search" class="device-input" placeholder="Filter version" />
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="filter-software-arch">Architecture</label>
+                <select id="filter-software-arch" name="architecture" class="device-input">
+                  <option value="">Any</option>
+                  <option value="x64">x64</option>
+                  <option value="x86">x86</option>
+                </select>
+              </div>
+              <div class="flex gap-2">
+                <button type="submit" class="h-9 flex-1 rounded-md bg-signal/15 border border-signal/40 text-sm text-signal hover:bg-signal/25">
+                  Search
+                </button>
+                <button type="button" id="software-clear-filters" class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-300">
+                  Clear
+                </button>
+              </div>
+            </form>
+
+            <div id="software-status" class="text-xs text-mist-400 mb-3" aria-live="polite"></div>
+
+            <div class="panel overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-left text-mist-400 text-xs uppercase tracking-wide">
+                  <tr>
+                    <th class="py-2 pr-3 font-medium">
+                      <button type="button" class="software-sort" data-sort="application_name">Application</button>
+                    </th>
+                    <th class="py-2 pr-3 font-medium">
+                      <button type="button" class="software-sort" data-sort="version">Version</button>
+                    </th>
+                    <th class="py-2 pr-3 font-medium">
+                      <button type="button" class="software-sort" data-sort="publisher">Publisher</button>
+                    </th>
+                    <th class="py-2 pr-3 font-medium">
+                      <button type="button" class="software-sort" data-sort="machine_name">Computer</button>
+                    </th>
+                    <th class="py-2 pr-3 font-medium">Current User</th>
+                    <th class="py-2 font-medium">
+                      <button type="button" class="software-sort" data-sort="collected_at">Last Seen</button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody id="software-body" class="divide-y divide-ink-600">
+                  <tr><td colspan="6" class="py-8 text-center text-mist-400">Open Software Inventory from Reports to search installed software across the company.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <p id="software-page-info" class="text-xs text-mist-400">—</p>
+              <div class="flex items-center gap-2">
+                <button type="button" id="software-prev" class="device-page-btn" disabled>Previous</button>
+                <button type="button" id="software-next" class="device-page-btn" disabled>Next</button>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-groups" class="view hidden">
+            <p class="text-[11px] uppercase tracking-wide text-mist-400 mb-1">Administration</p>
+            <h1 class="text-xl font-semibold mb-2">Groups</h1>
+            <p class="text-sm text-mist-400 max-w-2xl mb-4">
+              Reserved for Company → Groups → Computers. Group membership is not implemented in this sprint.
+            </p>
+            <div class="panel text-sm text-mist-400 py-6 text-center">Not implemented yet.</div>
+          </section>
+
+          <section id="view-alerts" class="view hidden">
+            <h1 class="text-xl font-semibold mb-2">Alerts</h1>
+            <p class="text-sm text-mist-400 max-w-2xl mb-4">
+              Company-wide alerts will attach to one computer. Detections are not implemented in this sprint.
+            </p>
+            <div class="panel text-sm text-mist-400 py-6 text-center">Not implemented yet.</div>
+          </section>
+
+          <section id="view-incidents" class="view hidden">
+            <h1 class="text-xl font-semibold mb-2">Incidents</h1>
+            <p class="text-sm text-mist-400 max-w-2xl mb-4">
+              Reserved for investigation cases that attach to one or more computers. No incident workflow in this sprint.
+            </p>
+            <div class="panel text-sm text-mist-400 py-6 text-center">Not implemented yet.</div>
+          </section>
+
+          <section id="view-policies" class="view hidden">
+            <h1 class="text-xl font-semibold mb-2">Policies</h1>
+            <p class="text-sm text-mist-400 max-w-2xl mb-4">
+              Company policy catalog. Assigned policy is already visible on Fleet and Computer Detail. Remote policy push is not implemented.
+            </p>
+            <div class="panel text-sm text-mist-400 py-6 text-center">Not implemented yet.</div>
+          </section>
+
+          <section id="view-reports" class="view hidden">
+            <h1 class="text-xl font-semibold mb-2">Reports</h1>
+            <p class="text-sm text-mist-400 max-w-2xl mb-4">
+              Company inventory and future usage reports. Account and Software inventory stay available here. They are not primary navigation.
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <article class="panel">
+                <h2 class="text-sm font-semibold mb-2">Account Inventory</h2>
+                <p class="text-sm text-mist-400 mb-3">Windows accounts across every computer. Same Sprint 12 API.</p>
+                <button type="button" class="inventory-link" data-open-view="users" data-view="users">Open inventory</button>
+              </article>
+              <article class="panel">
+                <h2 class="text-sm font-semibold mb-2">Software Inventory</h2>
+                <p class="text-sm text-mist-400 mb-3">Installed software across every computer. Same Sprint 12 API.</p>
+                <button type="button" class="inventory-link" data-open-view="software" data-view="software">Open inventory</button>
+              </article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Application Usage</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Website Usage</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Computer Usage</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Compliance</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Security</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Productivity</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+            </div>
+          </section>
+
+          <section id="view-administration" class="view hidden">
+            <h1 class="text-xl font-semibold mb-2">Administration</h1>
+            <p class="text-sm text-mist-400 max-w-2xl mb-4">
+              Company operators, roles, groups, and agent operations. Reserved only. No administration APIs in this sprint.
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Users</h2><p class="text-sm text-mist-400">Platform operators. Not Windows accounts. Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Roles</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel">
+                <h2 class="text-sm font-semibold mb-2">Groups</h2>
+                <p class="text-sm text-mist-400 mb-3">Company → Groups → Computers. Reserved.</p>
+                <button type="button" class="inventory-link" data-open-view="groups" data-view="groups">Open Groups</button>
+              </article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Policies</h2><p class="text-sm text-mist-400">Catalog is visible on Fleet. Administration editing is not implemented.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Agent Downloads</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">API Keys</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="panel"><h2 class="text-sm font-semibold mb-2">Audit Logs</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+            </div>
+          </section>
+
+          <section id="view-settings" class="view hidden">
+            <h1 class="text-xl font-semibold mb-2">Settings</h1>
+            <p class="text-sm text-mist-400 max-w-2xl mb-4">
+              Company settings and data-source configuration. Data sources remain configured through the RiskLens Platform API.
+            </p>
+            <div class="panel text-sm text-mist-400 py-6 text-center">Not implemented yet.</div>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>
