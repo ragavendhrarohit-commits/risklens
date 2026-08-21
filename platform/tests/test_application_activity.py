@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -231,3 +231,113 @@ def test_applications_endpoint_post_list_get(client: TestClient) -> None:
     detail = client.get(f"{APPLICATIONS_URL}/{activity_row_id}")
     assert detail.status_code == 200
     assert detail.json()["executable_name"] == "Cursor.exe"
+
+
+def test_application_activity_list_filters_by_started_at_range(client: TestClient) -> None:
+    agent_id = _register(client)
+    session_id = str(uuid4())
+    earlier = NOW - timedelta(days=1)
+    later = NOW
+    assert (
+        client.post(
+            SESSIONS_URL,
+            json={
+                "agent_id": agent_id,
+                "install_id": "install-1",
+                "collected_at": NOW.isoformat(),
+                "sessions": [
+                    {
+                        "session_id": session_id,
+                        "username": "rohit",
+                        "account_sid": "S-1-5-21-1",
+                        "logon_at": earlier.isoformat(),
+                        "status": "active",
+                    }
+                ],
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            APPLICATIONS_URL,
+            json={
+                "agent_id": agent_id,
+                "install_id": "install-1",
+                "collected_at": NOW.isoformat(),
+                "activities": [
+                    {
+                        "session_id": session_id,
+                        "application_name": "Yesterday App",
+                        "executable_name": "old.exe",
+                        "window_title": "old",
+                        "started_at": earlier.isoformat(),
+                        "duration_seconds": 10,
+                    },
+                    {
+                        "session_id": session_id,
+                        "application_name": "Today App",
+                        "executable_name": "new.exe",
+                        "window_title": "new",
+                        "started_at": later.isoformat(),
+                        "duration_seconds": 10,
+                    },
+                ],
+            },
+        ).status_code
+        == 200
+    )
+
+    yesterday = client.get(
+        APPLICATIONS_URL,
+        params={
+            "agent_id": agent_id,
+            "started_at_from": earlier.isoformat(),
+            "started_at_to": (earlier + timedelta(hours=12)).isoformat(),
+        },
+    )
+    assert yesterday.status_code == 200
+    assert yesterday.json()["total"] == 1
+    assert yesterday.json()["items"][0]["application_name"] == "Yesterday App"
+
+    today = client.get(
+        APPLICATIONS_URL,
+        params={
+            "agent_id": agent_id,
+            "started_at_from": later.isoformat(),
+            "started_at_to": (later + timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert today.status_code == 200
+    assert today.json()["total"] == 1
+    assert today.json()["items"][0]["application_name"] == "Today App"
+
+    empty = client.get(
+        APPLICATIONS_URL,
+        params={
+            "agent_id": agent_id,
+            "started_at_from": (later + timedelta(days=1)).isoformat(),
+            "started_at_to": (later + timedelta(days=2)).isoformat(),
+        },
+    )
+    assert empty.status_code == 200
+    assert empty.json()["total"] == 0
+    assert empty.json()["items"] == []
+
+    fleet = client.get(
+        f"/api/v1/fleet/{agent_id}/applications",
+        params={"started_at_from": later.isoformat(), "started_at_to": (later + timedelta(hours=1)).isoformat()},
+    )
+    assert fleet.status_code == 200
+    assert fleet.json()["total"] == 1
+    assert fleet.json()["items"][0]["application_name"] == "Today App"
+
+    inverted = client.get(
+        APPLICATIONS_URL,
+        params={
+            "agent_id": agent_id,
+            "started_at_from": later.isoformat(),
+            "started_at_to": earlier.isoformat(),
+        },
+    )
+    assert inverted.status_code == 422

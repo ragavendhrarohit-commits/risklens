@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -258,10 +259,19 @@ def list_fleet_applications(
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
     sort: str = Query(default=APPLICATION_SORT, max_length=64),
+    started_at_from: datetime | None = Query(default=None),
+    started_at_to: datetime | None = Query(default=None),
     service: FleetService = Depends(get_fleet_service),
 ) -> ApplicationActivityListResponse:
     try:
-        page = service.applications(agent_id, limit=limit, offset=offset, sort=sort)
+        page = service.applications(
+            agent_id,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            started_at_from=started_at_from,
+            started_at_to=started_at_to,
+        )
     except ValueError as exc:
         raise InvalidFleetQueryError(str(exc)) from exc
     return ApplicationActivityListResponse(

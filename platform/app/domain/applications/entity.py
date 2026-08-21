@@ -98,6 +98,8 @@ class ListApplicationActivityQuery:
     agent_id: UUID | None = None
     session_id: UUID | None = None
     application_name: str | None = None
+    started_at_from: datetime | None = None
+    started_at_to: datetime | None = None
     limit: int = DEFAULT_LIMIT
     offset: int = 0
     sort: str = DEFAULT_SORT
@@ -110,6 +112,12 @@ class ListApplicationActivityQuery:
         field, _ = parse_sort(self.sort)
         if field not in ALLOWED_SORT_FIELDS:
             raise ValueError(f"unsupported sort field: {field}")
+        if (
+            self.started_at_from is not None
+            and self.started_at_to is not None
+            and self.started_at_from > self.started_at_to
+        ):
+            raise ValueError("started_at_from must be before started_at_to")
 
 
 @dataclass(frozen=True, slots=True)

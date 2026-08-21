@@ -88,6 +88,10 @@ class MemoryApplicationActivityRepository(ApplicationActivityRepository):
             and query.application_name.casefold() not in record.application_name.casefold()
         ):
             return False
+        if query.started_at_from is not None and record.started_at < query.started_at_from:
+            return False
+        if query.started_at_to is not None and record.started_at > query.started_at_to:
+            return False
         return True
 
 

@@ -150,11 +150,25 @@ class FleetService:
         )
 
     def applications(
-        self, agent_id: UUID, *, limit: int, offset: int, sort: str
+        self,
+        agent_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        sort: str,
+        started_at_from: datetime | None = None,
+        started_at_to: datetime | None = None,
     ) -> ApplicationActivityPage:
         self._require_agent(agent_id)
         return self._applications.list(
-            ListApplicationActivityQuery(agent_id=agent_id, limit=limit, offset=offset, sort=sort)
+            ListApplicationActivityQuery(
+                agent_id=agent_id,
+                limit=limit,
+                offset=offset,
+                sort=sort,
+                started_at_from=started_at_from,
+                started_at_to=started_at_to,
+            )
         )
 
     def website_usage(self, agent_id: UUID) -> list[WebsiteUsageRow]:

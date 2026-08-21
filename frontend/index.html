@@ -116,7 +116,7 @@
       </aside>
 
       <div class="flex-1 min-w-0 flex flex-col">
-        <header class="h-14 shrink-0 border-b border-ink-600 bg-ink-900/80 px-5 flex items-center gap-4">
+        <header class="h-14 shrink-0 border-b border-ink-600 bg-ink-900/80 px-5 flex items-center gap-4 relative z-20">
           <form id="global-search-form" class="flex-1 max-w-xl">
             <label class="sr-only" for="global-search">Global search</label>
             <input
@@ -127,6 +127,59 @@
               class="w-full h-9 rounded-md bg-ink-800 border border-ink-600 px-3 text-sm placeholder:text-mist-400 focus:outline-none focus:border-signal opacity-50 cursor-not-allowed"
             />
           </form>
+          <div id="global-time-picker" class="gtp">
+            <button type="button" id="gtp-toggle" class="gtp-toggle" aria-expanded="false" aria-haspopup="dialog" aria-controls="gtp-panel">
+              <svg class="gtp-calendar" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="3.5" y="5.5" width="17" height="15" rx="2" stroke="currentColor" stroke-width="1.6" />
+                <path d="M3.5 10.5h17" stroke="currentColor" stroke-width="1.6" />
+                <path d="M8 3.5v4M16 3.5v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+              <span id="gtp-current">Last 15 Minutes</span>
+              <svg class="gtp-caret" width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M2.5 4.5 6 8l3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <div id="gtp-panel" class="gtp-panel" role="dialog" aria-label="Time range">
+              <section class="gtp-section" aria-labelledby="gtp-quick-heading">
+                <h2 id="gtp-quick-heading" class="gtp-heading">Quick Select</h2>
+                <div id="gtp-presets" class="gtp-preset-list"></div>
+              </section>
+              <section class="gtp-section" aria-labelledby="gtp-recent-heading">
+                <h2 id="gtp-recent-heading" class="gtp-heading">Recently Used</h2>
+                <div id="gtp-recent" class="gtp-recent-list"></div>
+              </section>
+              <section id="gtp-custom" class="gtp-section gtp-custom hidden" aria-labelledby="gtp-custom-heading">
+                <h2 id="gtp-custom-heading" class="gtp-heading">Custom Range</h2>
+                <div class="gtp-custom-grid">
+                  <label class="gtp-field">
+                    <span>Start Date</span>
+                    <input id="gtp-start-date" type="date" class="gtp-input" />
+                  </label>
+                  <label class="gtp-field">
+                    <span>Start Time</span>
+                    <input id="gtp-start-time" type="time" step="60" class="gtp-input" />
+                  </label>
+                  <label class="gtp-field">
+                    <span>End Date</span>
+                    <input id="gtp-end-date" type="date" class="gtp-input" />
+                  </label>
+                  <label class="gtp-field">
+                    <span>End Time</span>
+                    <input id="gtp-end-time" type="time" step="60" class="gtp-input" />
+                  </label>
+                </div>
+                <p id="gtp-custom-error" class="gtp-error" hidden></p>
+                <div class="gtp-actions">
+                  <button type="button" id="gtp-cancel" class="gtp-btn">Cancel</button>
+                  <button type="button" id="gtp-apply" class="gtp-btn gtp-btn-apply">Apply</button>
+                </div>
+              </section>
+              <section class="gtp-section gtp-refresh" aria-labelledby="gtp-refresh-heading">
+                <h2 id="gtp-refresh-heading" class="gtp-heading">Refresh Every</h2>
+                <div id="gtp-refresh-options" class="gtp-refresh-list"></div>
+              </section>
+            </div>
+          </div>
           <div id="platform-status" class="text-xs text-mist-400 whitespace-nowrap">RiskLens Platform</div>
         </header>
 
@@ -553,6 +606,8 @@
         </main>
       </div>
     </div>
+    <script src="/assets/global-time-filter.js"></script>
+    <script src="/assets/global-time-picker.js"></script>
     <script src="/assets/app.js"></script>
   </body>
 </html>

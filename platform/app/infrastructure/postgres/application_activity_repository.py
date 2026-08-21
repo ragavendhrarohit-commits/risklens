@@ -118,6 +118,10 @@ def _apply_filters(stmt: Select, query: ListApplicationActivityQuery) -> Select:
         stmt = stmt.where(
             ApplicationActivityRow.application_name.ilike(f"%{query.application_name}%")
         )
+    if query.started_at_from is not None:
+        stmt = stmt.where(ApplicationActivityRow.started_at >= query.started_at_from)
+    if query.started_at_to is not None:
+        stmt = stmt.where(ApplicationActivityRow.started_at <= query.started_at_to)
     return stmt
 
 

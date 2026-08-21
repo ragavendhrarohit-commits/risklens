@@ -37,6 +37,22 @@ def test_frontend_fleet_replaces_devices_nav() -> None:
     assert "/api/v1/software" in js
 
 
+def test_frontend_application_activity_uses_global_time_range() -> None:
+    js = APP_JS.read_text(encoding="utf-8")
+    assert "function applicationActivityTimeQuery" in js
+    assert "started_at_from: range.startTime" in js
+    assert "started_at_to: range.endTime" in js
+    assert "No application activity during the selected time range." in js
+    assert "bindApplicationActivityTimeFilter" in js
+    assert 'f.tab === "applications"' in js
+    assert "onApplicationActivityTimeRangeChange" in js
+    assert "/api/v1/fleet/${encodeURIComponent(f.selectedId)}/sessions`, { limit: 200 }" in js
+    assert "started_at_from" not in js.split("/website-usage")[1][:400]
+    assert 'tab === "sessions" && !f.sessions' in js
+    assert 'tab === "browser"' in js
+    assert "loadFleetTabData" in js
+
+
 def test_frontend_fleet_software_refetches_on_tab() -> None:
     js = APP_JS.read_text(encoding="utf-8")
     assert 'tab === "software" && !f.software' not in js

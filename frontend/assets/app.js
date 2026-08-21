@@ -463,7 +463,7 @@ function renderFleetSessionsTable(page) {
 function renderFleetApplicationActivityTable(page) {
   const items = page?.items || [];
   if (!items.length) {
-    return `<p class="device-empty">No application activity reported for this computer.</p>`;
+    return `<p class="device-empty">No application activity during the selected time range.</p>`;
   }
   const rows = items
     .map((item) => {
@@ -804,6 +804,30 @@ async function loadFleet() {
   }
 }
 
+function applicationActivityTimeQuery() {
+  const api = window.RiskLensGlobalTime;
+  if (!api || typeof api.getGlobalTimeStore !== "function") return {};
+  const range = api.getGlobalTimeStore().getState();
+  return {
+    started_at_from: range.startTime,
+    started_at_to: range.endTime,
+  };
+}
+
+function onApplicationActivityTimeRangeChange() {
+  const f = state.fleet;
+  f.applicationActivity = null;
+  if (state.view === "fleet-detail" && f.tab === "applications" && f.selectedId) {
+    loadFleetTabData();
+  }
+}
+
+function bindApplicationActivityTimeFilter() {
+  const api = window.RiskLensGlobalTime;
+  if (!api || typeof api.getGlobalTimeStore !== "function") return;
+  api.getGlobalTimeStore().subscribe(onApplicationActivityTimeRangeChange);
+}
+
 async function loadFleetTabData() {
   const f = state.fleet;
   if (!f.selectedId) return;
@@ -839,9 +863,12 @@ async function loadFleetTabData() {
       f.sessions = await fetchJson(
         platformUrl(`/api/v1/fleet/${encodeURIComponent(f.selectedId)}/sessions`, { limit: 200 })
       );
-    } else if (tab === "applications" && !f.applicationActivity) {
+    } else if (tab === "applications") {
       f.applicationActivity = await fetchJson(
-        platformUrl(`/api/v1/fleet/${encodeURIComponent(f.selectedId)}/applications`, { limit: 200 })
+        platformUrl(`/api/v1/fleet/${encodeURIComponent(f.selectedId)}/applications`, {
+          limit: 200,
+          ...applicationActivityTimeQuery(),
+        })
       );
     } else if (tab === "browser") {
       f.websiteUsage = await fetchJson(
@@ -1369,3 +1396,4 @@ document.querySelectorAll(".software-sort").forEach((button) => {
 });
 
 applyFleetHash();
+bindApplicationActivityTimeFilter();
