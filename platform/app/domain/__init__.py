@@ -4,6 +4,6 @@ Active modules: agent, device, heartbeat, user, software, fleet, sessions,
 applications, classification, browser, website_usage.
 
 Reserved for later sprints (empty packages, no business logic):
-activity, network, alerts, incidents, rules, timeline,
+activity, network, alerts, incidents, rules,
 reports, ai, groups, administration.
 """

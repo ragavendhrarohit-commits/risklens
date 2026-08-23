@@ -26,6 +26,9 @@ from app.infrastructure.memory.memory_heartbeat_repository import (
 from app.infrastructure.memory.memory_application_activity_repository import (
     MemoryApplicationActivityRepository,
 )
+from app.infrastructure.memory.memory_geolocation_repository import (
+    MemoryGeolocationRepository,
+)
 from app.infrastructure.memory.memory_browser_activity_repository import (
     MemoryBrowserActivityRepository,
 )
@@ -52,6 +55,9 @@ from app.infrastructure.postgres.heartbeat_repository import (
 from app.infrastructure.postgres.application_activity_repository import (
     PostgresApplicationActivityRepository,
 )
+from app.infrastructure.postgres.geolocation_repository import (
+    PostgresGeolocationRepository,
+)
 from app.infrastructure.postgres.browser_activity_repository import (
     PostgresBrowserActivityRepository,
 )
@@ -72,6 +78,7 @@ from app.repositories.fleet_repository import (
 from app.repositories.heartbeat_repository import HeartbeatRepository
 from app.repositories.application_activity_repository import ApplicationActivityRepository
 from app.repositories.browser_activity_repository import BrowserActivityRepository
+from app.repositories.geolocation_repository import GeolocationRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.software_repository import SoftwareRepository
 from app.repositories.user_repository import UserRepository
@@ -82,9 +89,12 @@ from app.services.fleet_service import FleetProjection, FleetService
 from app.services.heartbeat_service import HeartbeatService
 from app.services.application_activity_service import ApplicationActivityService
 from app.services.browser_activity_service import BrowserActivityService
+from app.services.geolocation_service import GeolocationService
+from app.services.productivity_report_service import ProductivityReportService
 from app.services.session_service import SessionService
 from app.services.software_service import SoftwareInventoryService
 from app.services.user_service import UserInventoryService
+from app.domain.geolocation import IpApiGeoLookupProvider, StubGeoLookupProvider
 
 
 def build_lifespan(settings: Settings) -> Callable[[FastAPI], "AsyncIterator[None]"]:
@@ -183,6 +193,11 @@ def _register_services(
             BrowserActivityRepository,
             lambda c: PostgresBrowserActivityRepository(c.resolve(Database).session_factory),
         )
+        container.register_factory(
+            GeolocationRepository,
+            lambda c: PostgresGeolocationRepository(c.resolve(Database).session_factory),
+        )
+        container.register_instance(IpApiGeoLookupProvider, IpApiGeoLookupProvider())
         logger.info("repositories bound to postgres")
     else:
         container.register_factory(
@@ -238,8 +253,16 @@ def _register_services(
         )
         container.register_factory(
             BrowserActivityRepository,
-            lambda _c: MemoryBrowserActivityRepository(),
+            lambda c: MemoryBrowserActivityRepository(
+                c.resolve(AgentRepository),
+                c.resolve(SessionRepository),
+            ),
         )
+        container.register_factory(
+            GeolocationRepository,
+            lambda _c: MemoryGeolocationRepository(),
+        )
+        container.register_instance(StubGeoLookupProvider, StubGeoLookupProvider())
         logger.info("repositories bound to memory")
 
     container.register_factory(
@@ -265,11 +288,22 @@ def _register_services(
         ),
     )
     container.register_factory(
+        GeolocationService,
+        lambda c: GeolocationService(
+            c.resolve(AgentRepository),
+            c.resolve(DeviceInventoryRepository),
+            c.resolve(AgentStatusRepository),
+            c.resolve(GeolocationRepository),
+            _resolve_lookup(c, settings),
+        ),
+    )
+    container.register_factory(
         HeartbeatService,
         lambda c: HeartbeatService(
             c.resolve(AgentRepository),
             c.resolve(HeartbeatRepository),
             projection=c.resolve(FleetProjection),
+            geolocation=c.resolve(GeolocationService),
         ),
     )
     container.register_factory(
@@ -328,4 +362,20 @@ def _register_services(
             c.resolve(ApplicationActivityService),
         ),
     )
+
+    container.register_factory(
+        ProductivityReportService,
+        lambda c: ProductivityReportService(
+            c.resolve(AgentRepository),
+            c.resolve(DeviceInventoryRepository),
+            c.resolve(ApplicationActivityRepository),
+            c.resolve(AgentTagRepository),
+        ),
+    )
     return database
+
+
+def _resolve_lookup(container: Container, settings: Settings):
+    if settings.repository_backend is RepositoryBackend.postgres:
+        return container.resolve(IpApiGeoLookupProvider)
+    return container.resolve(StubGeoLookupProvider)

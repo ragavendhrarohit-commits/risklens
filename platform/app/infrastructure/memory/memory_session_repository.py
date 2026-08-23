@@ -11,6 +11,7 @@ from app.domain.sessions import (
     ListSessionsQuery,
     SessionPage,
     SessionRecord,
+    can_reopen_closed_session,
     parse_sort,
     session_duration_seconds,
     session_is_immutable,
@@ -35,7 +36,11 @@ class MemorySessionRepository(SessionRepository):
             for session in sessions:
                 existing = self._rows.get(session.session_id)
                 sql_where = "session_id = :session_id AND status != 'closed'"
-                if existing is not None and session_is_immutable(existing.status, existing.logoff_at):
+                if (
+                    existing is not None
+                    and session_is_immutable(existing.status, existing.logoff_at)
+                    and not can_reopen_closed_session(existing, session)
+                ):
                     _logger.info(
                         "session upsert",
                         extra={
@@ -108,10 +113,17 @@ class MemorySessionRepository(SessionRepository):
             existing = self._rows.get(incoming.session_id)
             inserted = 0
             updated = 0
+            known = [
+                session
+                for session in self._rows.values()
+                if session.agent_id == incoming.agent_id
+            ]
             if existing is None:
                 self._rows[incoming.session_id] = incoming
                 inserted = 1
-            elif session_is_immutable(existing.status, existing.logoff_at):
+            elif session_is_immutable(existing.status, existing.logoff_at) and not (
+                can_reopen_closed_session(existing, incoming, known_sessions=known)
+            ):
                 pass
             else:
                 self._rows[incoming.session_id] = incoming

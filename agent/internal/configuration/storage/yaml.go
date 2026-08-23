@@ -19,22 +19,21 @@ type document struct {
 	Agent   *legacyAgent   `yaml:"agent,omitempty"`
 	Service *legacyService `yaml:"service,omitempty"`
 
-	General         *generalDoc         `yaml:"general,omitempty"`
-	Logging         *loggingDoc         `yaml:"logging,omitempty"`
-	Modules         *modulesDoc         `yaml:"modules,omitempty"`
-	Performance     *performanceDoc     `yaml:"performance,omitempty"`
-	Storage         *storageDoc         `yaml:"storage,omitempty"`
-	Identity        *identityDoc        `yaml:"identity,omitempty"`
-	Networking      *networkingDoc      `yaml:"networking,omitempty"`
-	Registration    *registrationDoc    `yaml:"registration,omitempty"`
-	DeviceUpload    *deviceUploadDoc    `yaml:"device_upload,omitempty"`
-	Heartbeat       *heartbeatDoc       `yaml:"heartbeat,omitempty"`
-	Users           *usersDoc           `yaml:"users,omitempty"`
-	Software        *softwareDoc        `yaml:"software,omitempty"`
-	Activity        *activityDoc        `yaml:"activity,omitempty"`
-	BrowserActivity *browserActivityDoc `yaml:"browser_activity,omitempty"`
-	Security        *struct{}           `yaml:"security,omitempty"`
-	Update          *struct{}           `yaml:"update,omitempty"`
+	General      *generalDoc      `yaml:"general,omitempty"`
+	Logging      *loggingDoc      `yaml:"logging,omitempty"`
+	Modules      *modulesDoc      `yaml:"modules,omitempty"`
+	Performance  *performanceDoc  `yaml:"performance,omitempty"`
+	Storage      *storageDoc      `yaml:"storage,omitempty"`
+	Identity     *identityDoc     `yaml:"identity,omitempty"`
+	Networking   *networkingDoc   `yaml:"networking,omitempty"`
+	Registration *registrationDoc `yaml:"registration,omitempty"`
+	DeviceUpload *deviceUploadDoc `yaml:"device_upload,omitempty"`
+	Heartbeat    *heartbeatDoc    `yaml:"heartbeat,omitempty"`
+	Users        *usersDoc        `yaml:"users,omitempty"`
+	Software     *softwareDoc     `yaml:"software,omitempty"`
+	Activity     *activityDoc     `yaml:"activity,omitempty"`
+	Security     *struct{}        `yaml:"security,omitempty"`
+	Update       *struct{}        `yaml:"update,omitempty"`
 }
 
 type legacyAgent struct {
@@ -113,14 +112,6 @@ type activityDoc struct {
 	Enabled  *bool  `yaml:"enabled"`
 	Timeout  string `yaml:"timeout"`
 	Interval string `yaml:"interval"`
-}
-
-type browserActivityDoc struct {
-	Enabled             *bool  `yaml:"enabled"`
-	Timeout             string `yaml:"timeout"`
-	Interval            string `yaml:"interval"`
-	ChromiumExtensionID string `yaml:"chromium_extension_id"`
-	FirefoxExtensionID  string `yaml:"firefox_extension_id"`
 }
 
 type YAMLStore struct {
@@ -336,23 +327,6 @@ func applyDocument(cfg *model.Config, doc document) {
 			cfg.Activity.IntervalRaw = doc.Activity.Interval
 		}
 	}
-	if doc.BrowserActivity != nil {
-		if doc.BrowserActivity.Enabled != nil {
-			cfg.BrowserActivity.Enabled = *doc.BrowserActivity.Enabled
-		}
-		if doc.BrowserActivity.Timeout != "" {
-			cfg.BrowserActivity.TimeoutRaw = doc.BrowserActivity.Timeout
-		}
-		if doc.BrowserActivity.Interval != "" {
-			cfg.BrowserActivity.IntervalRaw = doc.BrowserActivity.Interval
-		}
-		if doc.BrowserActivity.ChromiumExtensionID != "" {
-			cfg.BrowserActivity.ChromiumExtensionID = doc.BrowserActivity.ChromiumExtensionID
-		}
-		if doc.BrowserActivity.FirefoxExtensionID != "" {
-			cfg.BrowserActivity.FirefoxExtensionID = doc.BrowserActivity.FirefoxExtensionID
-		}
-	}
 }
 
 func documentFrom(cfg model.Config) document {
@@ -420,13 +394,6 @@ func documentFrom(cfg model.Config) document {
 			Enabled:  boolPtr(cfg.Activity.Enabled),
 			Timeout:  cfg.Activity.TimeoutRaw,
 			Interval: cfg.Activity.IntervalRaw,
-		},
-		BrowserActivity: &browserActivityDoc{
-			Enabled:             boolPtr(cfg.BrowserActivity.Enabled),
-			Timeout:             cfg.BrowserActivity.TimeoutRaw,
-			Interval:            cfg.BrowserActivity.IntervalRaw,
-			ChromiumExtensionID: cfg.BrowserActivity.ChromiumExtensionID,
-			FirefoxExtensionID:  cfg.BrowserActivity.FirefoxExtensionID,
 		},
 		Security: &struct{}{},
 		Update:   &struct{}{},

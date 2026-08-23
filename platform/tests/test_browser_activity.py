@@ -448,3 +448,69 @@ def test_service_rejects_non_browser() -> None:
                 ],
             )
         )
+
+
+def _upload_browser(client: TestClient, agent_id: str, activities: list[dict]) -> None:
+    resp = client.post(
+        BROWSER_URL,
+        json={
+            "agent_id": agent_id,
+            "install_id": "install-1",
+            "collected_at": NOW.isoformat(),
+            "activities": activities,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_fleet_browser_activity_uses_application_activity_not_ingest(client: TestClient) -> None:
+    agent_id = _register(client)
+    session_id = _open_session(client, agent_id)
+    assert (
+        client.post(
+            APPLICATIONS_URL,
+            json={
+                "agent_id": agent_id,
+                "install_id": "install-1",
+                "collected_at": NOW.isoformat(),
+                "activities": [
+                    {
+                        "session_id": session_id,
+                        "application_name": "Google Chrome",
+                        "executable_name": "chrome.exe",
+                        "window_title": "GitHub - Google Chrome",
+                        "started_at": NOW.isoformat(),
+                        "duration_seconds": 120,
+                    }
+                ],
+            },
+        ).status_code
+        == 200
+    )
+    page = client.get(f"/api/v1/fleet/{agent_id}/browser-activity")
+    assert page.status_code == 200
+    assert page.json()["total"] == 1
+    assert page.json()["items"][0]["website"] == "github.com"
+
+    _upload_browser(
+        client,
+        agent_id,
+        [
+            {
+                "session_id": session_id,
+                "executable_name": "chrome.exe",
+                "domain": "youtube.com",
+                "url": "https://www.youtube.com/watch?v=secret",
+                "title": "YouTube",
+                "window_id": 1,
+                "tab_id": 13,
+                "started_at": NOW.isoformat(),
+                "duration_seconds": 999,
+            }
+        ],
+    )
+    after = client.get(f"/api/v1/fleet/{agent_id}/browser-activity")
+    assert after.status_code == 200
+    websites = [item["website"] for item in after.json()["items"]]
+    assert websites == ["github.com"]
+

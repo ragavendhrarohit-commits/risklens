@@ -179,7 +179,8 @@ def test_merge_does_not_reopen_or_replace_earlier_logout() -> None:
         collected_at=LOGIN_2,
         received_at=LOGIN_2,
     )
-    assert merge_session(closed, reopen).status == SESSION_STATUS_CLOSED
+    assert merge_session(closed, reopen).status == SESSION_STATUS_ACTIVE
+    assert merge_session(closed, reopen).logoff_at is None
     assert cap_logoff_at(LOGIN_1, RECONCILE, LOGIN_2) == LOGIN_2
 
 
@@ -305,7 +306,8 @@ def test_duplicate_logout_is_idempotent(client: TestClient) -> None:
     assert _get(client, session_id)["logoff_at"].startswith("2026-08-16T11:40:00")
 
 
-def test_active_refresh_does_not_reopen_closed_session(client: TestClient) -> None:
+def test_active_refresh_reopens_closed_session_for_same_logon(client: TestClient) -> None:
+    """Agent ACTIVE heartbeats for the same Windows logon reopen a falsely closed session."""
     agent_id = _register(client)
     session_id = str(uuid4())
     _post_session(
@@ -319,8 +321,8 @@ def test_active_refresh_does_not_reopen_closed_session(client: TestClient) -> No
     )
     _post_session(client, agent_id, session_id, logon_at=LOGIN_1, logoff_at=None, status="active")
     body = _get(client, session_id)
-    assert body["status"] == "closed"
-    assert body["logoff_at"].startswith("2026-08-16T11:40:00")
+    assert body["status"] == "active"
+    assert body["logoff_at"] is None
 
 
 def test_consecutive_logins_never_overlap(client: TestClient) -> None:

@@ -251,26 +251,6 @@ func applyEnv(cfg *model.Config) {
 	if v := os.Getenv(model.EnvActivityInterval); v != "" {
 		cfg.Activity.IntervalRaw = v
 	}
-	if v := os.Getenv(model.EnvBrowserActivityEnabled); v != "" {
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "1", "true", "yes", "on":
-			cfg.BrowserActivity.Enabled = true
-		case "0", "false", "no", "off":
-			cfg.BrowserActivity.Enabled = false
-		}
-	}
-	if v := os.Getenv(model.EnvBrowserActivityTimeout); v != "" {
-		cfg.BrowserActivity.TimeoutRaw = v
-	}
-	if v := os.Getenv(model.EnvBrowserActivityInterval); v != "" {
-		cfg.BrowserActivity.IntervalRaw = v
-	}
-	if v := os.Getenv(model.EnvBrowserChromiumExtensionID); v != "" {
-		cfg.BrowserActivity.ChromiumExtensionID = v
-	}
-	if v := os.Getenv(model.EnvBrowserFirefoxExtensionID); v != "" {
-		cfg.BrowserActivity.FirefoxExtensionID = v
-	}
 }
 
 func ResolvePath(explicit string) string {

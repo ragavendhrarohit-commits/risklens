@@ -105,7 +105,7 @@ Accepted controls while running:
 
 **SessionChange:** logs the notification; if a `SessionChangeSink` is set (the activity module), calls `OnWindowsSessionChange(eventType, sessionID)` on a **new goroutine**.
 
-**Shutdown / PreShutdown:** calls `OnWindowsShutdown` with flush timeout `min(8s, handler.Timeout)` **before** requesting stop. This is a user/machine shutdown, not an agent restart.
+**Shutdown / PreShutdown:** calls `OnWindowsShutdown` with flush timeout `min(8s, handler.Timeout)` **before** requesting stop. This is a user/machine shutdown, not an agent restart. **These SCM controls only arrive when the agent runs as a Windows Service.** Console-mode runs do not receive PreShutdown/Shutdown; missing flush on OS shutdown in that mode is a documented known limitation (see [08_AGENT_SESSION_LIFECYCLE.md](08_AGENT_SESSION_LIFECYCLE.md) §5), not a reason to change session architecture or invent heartbeat-based logout.
 
 ### Non-Windows stub (`windows_stub.go`)
 

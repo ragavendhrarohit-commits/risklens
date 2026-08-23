@@ -11,6 +11,7 @@ from app.domain.browser.entity import (
     ListBrowserActivityQuery,
     UpsertBrowserActivityCommand,
     browser_activity_id,
+    browser_label,
     is_browser_executable,
     parse_sort,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "UpsertBrowserActivityCommand",
     "application_total_seconds",
     "browser_activity_id",
+    "browser_label",
     "is_browser_executable",
     "join_application_interval",
     "parse_sort",

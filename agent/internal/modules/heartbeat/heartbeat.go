@@ -10,7 +10,9 @@ import (
 
 	idmodel "risklens/agent/internal/identity/model"
 	"risklens/agent/internal/modules/base"
+	"risklens/agent/internal/modules/health"
 	"risklens/agent/internal/modules/interfaces"
+	"risklens/agent/internal/modules/network"
 	txinterfaces "risklens/agent/internal/transport/interfaces"
 )
 
@@ -175,7 +177,7 @@ func (m *Module) sendOnce(ctx context.Context) {
 		return
 	}
 
-	req := RequestFromIdentity(id, m.now())
+	req := RequestFromIdentity(id, m.now(), network.Collect(ctx), health.Collect())
 	if m.logger != nil {
 		body, _ := json.Marshal(req)
 		m.logger.Info("REPRO Heartbeat payload", "payload", string(body))

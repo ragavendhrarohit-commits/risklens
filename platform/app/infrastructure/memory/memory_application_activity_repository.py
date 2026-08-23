@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from threading import RLock
+from uuid import UUID
 
 from app.domain.applications import (
     ApplicationActivity,
@@ -9,9 +11,12 @@ from app.domain.applications import (
     ListApplicationActivityQuery,
     parse_sort,
 )
+from app.domain.productivity import ApplicationAggregate, IntervalPoint, TitleAggregate, interval_end
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.application_activity_repository import ApplicationActivityRepository
 from app.repositories.session_repository import SessionRepository
+
+_BROWSER_EXECUTABLES = frozenset({"chrome.exe", "msedge.exe", "firefox.exe"})
 
 
 class MemoryApplicationActivityRepository(ApplicationActivityRepository):
@@ -76,6 +81,94 @@ class MemoryApplicationActivityRepository(ApplicationActivityRepository):
             username=username,
             machine_name=machine_name,
         )
+
+    def productivity_application_usage(
+        self,
+        agent_id: UUID,
+        *,
+        started_at_from: datetime | None = None,
+        started_at_to: datetime | None = None,
+    ) -> list[ApplicationAggregate]:
+        buckets: dict[str, list[int]] = {}
+        for record in self._filtered_records(agent_id, started_at_from, started_at_to):
+            name = (record.application_name or "").strip() or "Unknown Application"
+            current = buckets.get(name)
+            if current is None:
+                buckets[name] = [max(0, int(record.duration_seconds or 0)), 1]
+            else:
+                current[0] += max(0, int(record.duration_seconds or 0))
+                current[1] += 1
+        rows = [
+            ApplicationAggregate(application=name, duration_seconds=data[0], launch_count=data[1])
+            for name, data in buckets.items()
+        ]
+        rows.sort(key=lambda row: (-row.duration_seconds, row.application))
+        return rows
+
+    def productivity_browser_title_usage(
+        self,
+        agent_id: UUID,
+        *,
+        started_at_from: datetime | None = None,
+        started_at_to: datetime | None = None,
+    ) -> list[TitleAggregate]:
+        buckets: dict[tuple[str, str], list[int]] = {}
+        for record in self._filtered_records(agent_id, started_at_from, started_at_to):
+            executable = (record.executable_name or "").strip().casefold()
+            if executable not in _BROWSER_EXECUTABLES:
+                continue
+            key = (record.window_title or "", record.executable_name or "")
+            current = buckets.get(key)
+            if current is None:
+                buckets[key] = [max(0, int(record.duration_seconds or 0)), 1]
+            else:
+                current[0] += max(0, int(record.duration_seconds or 0))
+                current[1] += 1
+        return [
+            TitleAggregate(
+                window_title=title,
+                executable_name=executable,
+                duration_seconds=data[0],
+                visit_count=data[1],
+            )
+            for (title, executable), data in buckets.items()
+        ]
+
+    def productivity_intervals(
+        self,
+        agent_id: UUID,
+        *,
+        started_at_from: datetime | None = None,
+        started_at_to: datetime | None = None,
+    ) -> list[IntervalPoint]:
+        rows = self._filtered_records(agent_id, started_at_from, started_at_to)
+        rows.sort(key=lambda row: (row.started_at, row.id))
+        return [
+            IntervalPoint(
+                started_at=row.started_at,
+                ended_at=interval_end(row.started_at, row.stopped_at, row.duration_seconds),
+            )
+            for row in rows
+        ]
+
+    def _filtered_records(
+        self,
+        agent_id: UUID,
+        started_at_from: datetime | None,
+        started_at_to: datetime | None,
+    ) -> list[ApplicationActivityRecord]:
+        with self._lock:
+            rows = [self._to_record(item) for item in self._rows.values()]
+        filtered: list[ApplicationActivityRecord] = []
+        for row in rows:
+            if row.agent_id != agent_id:
+                continue
+            if started_at_from is not None and row.started_at < started_at_from:
+                continue
+            if started_at_to is not None and row.started_at > started_at_to:
+                continue
+            filtered.append(row)
+        return filtered
 
     @staticmethod
     def _matches(record: ApplicationActivityRecord, query: ListApplicationActivityQuery) -> bool:

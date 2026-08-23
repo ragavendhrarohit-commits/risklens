@@ -108,9 +108,6 @@ func Validate(cfg *model.Config) error {
 	if err := validateActivity(cfg); err != nil {
 		return err
 	}
-	if err := validateBrowserActivity(cfg); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -384,61 +381,9 @@ func validateActivity(cfg *model.Config) error {
 	return nil
 }
 
-func validateBrowserActivity(cfg *model.Config) error {
-	raw := strings.TrimSpace(cfg.BrowserActivity.TimeoutRaw)
-	if raw == "" {
-		if cfg.BrowserActivity.Timeout <= 0 {
-			cfg.BrowserActivity.Timeout = 15 * time.Second
-		}
-		cfg.BrowserActivity.TimeoutRaw = cfg.BrowserActivity.Timeout.String()
-	} else {
-		d, err := time.ParseDuration(raw)
-		if err != nil {
-			return fmt.Errorf("%w: browser_activity.timeout invalid: %v", ErrInvalid, err)
-		}
-		if d <= 0 || d > 5*time.Minute {
-			return fmt.Errorf("%w: browser_activity.timeout must be > 0 and <= 5m", ErrInvalid)
-		}
-		cfg.BrowserActivity.Timeout = d
-		cfg.BrowserActivity.TimeoutRaw = raw
-	}
-
-	intervalRaw := strings.TrimSpace(cfg.BrowserActivity.IntervalRaw)
-	if intervalRaw == "" {
-		if cfg.BrowserActivity.Interval <= 0 {
-			cfg.BrowserActivity.Interval = 15 * time.Second
-		}
-		cfg.BrowserActivity.IntervalRaw = cfg.BrowserActivity.Interval.String()
-	} else {
-		d, err := time.ParseDuration(intervalRaw)
-		if err != nil {
-			return fmt.Errorf("%w: browser_activity.interval invalid: %v", ErrInvalid, err)
-		}
-		if d < 15*time.Second || d > time.Hour {
-			return fmt.Errorf("%w: browser_activity.interval must be >= 15s and <= 1h", ErrInvalid)
-		}
-		cfg.BrowserActivity.Interval = d
-		cfg.BrowserActivity.IntervalRaw = intervalRaw
-	}
-
-	if strings.TrimSpace(cfg.BrowserActivity.FirefoxExtensionID) == "" {
-		cfg.BrowserActivity.FirefoxExtensionID = "browser-activity@risklens.local"
-	}
-
-	backendURL := strings.TrimSpace(cfg.Networking.BackendURL)
-	cfg.Networking.BackendURL = strings.TrimRight(backendURL, "/")
-
-	if cfg.BrowserActivity.Enabled {
-		if err := requireBackendURL(cfg.Networking.BackendURL); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func requireBackendURL(backendURL string) error {
 	if backendURL == "" {
-		return fmt.Errorf("%w: networking.backend_url is required when registration, device_upload, heartbeat, users, software, activity, or browser_activity is enabled", ErrInvalid)
+		return fmt.Errorf("%w: networking.backend_url is required when registration, device_upload, heartbeat, users, software, or activity is enabled", ErrInvalid)
 	}
 	u, err := url.Parse(backendURL)
 	if err != nil {

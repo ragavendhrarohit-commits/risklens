@@ -32,8 +32,19 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 
 
+_BROWSER_LABELS: dict[str, str] = {
+    "chrome.exe": "Chrome",
+    "msedge.exe": "Edge",
+    "firefox.exe": "Firefox",
+}
+
+
 def is_browser_executable(executable: str) -> bool:
     return normalize_executable(executable) in BROWSER_CONTAINERS
+
+
+def browser_label(executable: str) -> str:
+    return _BROWSER_LABELS.get(normalize_executable(executable), "Browser")
 
 
 def browser_activity_id(
@@ -124,6 +135,8 @@ class BrowserActivityRecord:
     duration_seconds: int
     collected_at: datetime
     received_at: datetime
+    username: str = ""
+    machine_name: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +144,8 @@ class ListBrowserActivityQuery:
     agent_id: UUID | None = None
     session_id: UUID | None = None
     domain: str | None = None
+    started_at_from: datetime | None = None
+    started_at_to: datetime | None = None
     limit: int = DEFAULT_LIMIT
     offset: int = 0
     sort: str = DEFAULT_SORT
@@ -143,6 +158,12 @@ class ListBrowserActivityQuery:
         field, _ = parse_sort(self.sort)
         if field not in ALLOWED_SORT_FIELDS:
             raise ValueError(f"unsupported sort field: {field}")
+        if (
+            self.started_at_from is not None
+            and self.started_at_to is not None
+            and self.started_at_from > self.started_at_to
+        ):
+            raise ValueError("started_at_from must be before started_at_to")
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,7 +12,9 @@ import (
 	"time"
 
 	idmodel "risklens/agent/internal/identity/model"
+	"risklens/agent/internal/modules/health"
 	"risklens/agent/internal/modules/interfaces"
+	"risklens/agent/internal/modules/network"
 	txerrors "risklens/agent/internal/transport/errors"
 	txinterfaces "risklens/agent/internal/transport/interfaces"
 	"risklens/agent/internal/transport/request"
@@ -187,7 +189,7 @@ func TestTransportTimeout(t *testing.T) {
 		err: txerrors.New(txerrors.KindTimeout, "send", context.DeadlineExceeded),
 	}
 	client := NewClientWithTransport(ft, testLogger())
-	_, err := client.Send(context.Background(), RequestFromIdentity(sampleIdentity(), time.Now().UTC()))
+	_, err := client.Send(context.Background(), RequestFromIdentity(sampleIdentity(), time.Now().UTC(), network.EndpointNetwork{}, health.Snapshot{}))
 	if !errors.Is(err, ErrTransport) {
 		t.Fatalf("err = %v", err)
 	}
@@ -252,7 +254,7 @@ func TestSchedulerGracefulStop(t *testing.T) {
 
 func TestRequestFromIdentityDoesNotInventIDs(t *testing.T) {
 	id := sampleIdentity()
-	req := RequestFromIdentity(id, time.Date(2026, 8, 14, 4, 0, 0, 0, time.UTC))
+	req := RequestFromIdentity(id, time.Date(2026, 8, 14, 4, 0, 0, 0, time.UTC), network.EndpointNetwork{}, health.Snapshot{})
 	if req.AgentID != id.AgentID || req.InstallID != id.InstallID {
 		t.Fatalf("ids mutated: %+v", req)
 	}
@@ -262,7 +264,7 @@ func TestRequestFromIdentityDoesNotInventIDs(t *testing.T) {
 }
 
 func TestHeartbeatRequestCannotCarrySessions(t *testing.T) {
-	req := RequestFromIdentity(sampleIdentity(), time.Date(2026, 8, 16, 12, 35, 34, 0, time.UTC))
+	req := RequestFromIdentity(sampleIdentity(), time.Date(2026, 8, 16, 12, 35, 34, 0, time.UTC), network.EndpointNetwork{}, health.Snapshot{})
 	data, err := json.Marshal(req)
 	if err != nil {
 		t.Fatal(err)
@@ -278,5 +280,39 @@ func TestHeartbeatRequestCannotCarrySessions(t *testing.T) {
 	}
 	if len(payload) != 3 {
 		t.Fatalf("heartbeat payload = %s", data)
+	}
+}
+
+func TestHeartbeatRequestIncludesHealthWhenPresent(t *testing.T) {
+	snap := health.Snapshot{
+		CPUPercent:    12.5,
+		CPUModel:      "Test CPU",
+		LogicalCPUs:   8,
+		PhysicalCores: 4,
+		Memory: health.MemoryStats{
+			Total: 1024, Used: 512, Free: 512, Percent: 50,
+		},
+		Disks: []health.DiskStats{{
+			Name: "C:", Total: 2048, Used: 1024, Free: 1024, Percent: 50,
+		}},
+	}
+	req := RequestFromIdentity(sampleIdentity(), time.Date(2026, 8, 16, 12, 35, 34, 0, time.UTC), network.EndpointNetwork{}, snap)
+	if req.Health == nil {
+		t.Fatal("expected health snapshot")
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	healthObj, ok := payload["health"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing health object: %s", data)
+	}
+	if healthObj["cpu_percent"] != 12.5 {
+		t.Fatalf("cpu_percent = %v", healthObj["cpu_percent"])
 	}
 }

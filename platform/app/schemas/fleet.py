@@ -3,9 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from app.domain.fleet import NOT_IMPLEMENTED
+from pydantic import BaseModel, Field
 
 
 class FleetSummaryResponse(BaseModel):
@@ -54,36 +52,35 @@ class FleetListResponse(BaseModel):
     offset: int
 
 
+class FleetMemoryHealthResponse(BaseModel):
+    total: int
+    used: int
+    free: int
+    percent: float
+
+
+class FleetDiskHealthResponse(BaseModel):
+    name: str
+    total: int
+    used: int
+    free: int
+    percent: float
+
+
 class FleetHealthResponse(BaseModel):
     status: str
     heartbeat_age_seconds: int | None
     last_inventory_at: datetime | None
     last_communication_at: datetime | None
-    cpu_usage: str = NOT_IMPLEMENTED
-    memory_usage: str = NOT_IMPLEMENTED
-    disk_usage: str = NOT_IMPLEMENTED
+    cpu_percent: float | None = None
+    cpu_model: str | None = None
+    logical_cpus: int | None = None
+    physical_cores: int | None = None
+    memory: FleetMemoryHealthResponse | None = None
+    disks: list[FleetDiskHealthResponse] = Field(default_factory=list)
     memory_bytes: int | None = None
     disk_total_bytes: int | None = None
     disk_free_bytes: int | None = None
-
-
-class FleetPolicyResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: UUID
-    name: str
-    heartbeat_interval_seconds: int
-    collect_devices: bool
-    collect_users: bool
-    collect_software: bool
-    collect_processes: bool = Field(description="Reserved for a later sprint.")
-    collect_services: bool = Field(description="Reserved for a later sprint.")
-    collect_event_logs: bool = Field(description="Reserved for a later sprint.")
-    created_at: datetime
-
-
-class FleetTimelineResponse(BaseModel):
-    status: str = NOT_IMPLEMENTED
 
 
 class WebsiteUsageItemResponse(BaseModel):
@@ -97,3 +94,38 @@ class WebsiteUsageItemResponse(BaseModel):
 class WebsiteUsageListResponse(BaseModel):
     items: list[WebsiteUsageItemResponse]
     total: int
+
+
+class BrowserVisitResponse(BaseModel):
+    started_at: datetime
+    stopped_at: datetime | None
+    duration_seconds: int
+    status: str
+    page_title: str = ""
+    window_title: str = ""
+    website: str = ""
+    browser: str = ""
+
+
+class BrowserActivityItemResponse(BaseModel):
+    website: str
+    browser: str
+    page_title: str = ""
+    duration_seconds: int
+    total_time: str
+    visits: int
+    last_visited: datetime
+    status: str
+    timeline: list[BrowserVisitResponse]
+
+
+class BrowserActivityListResponse(BaseModel):
+    items: list[BrowserActivityItemResponse]
+    total: int
+    limit: int
+    offset: int
+    total_browser_time_seconds: int
+    total_browser_time: str
+    websites_visited: int
+    active_website: str | None = None
+    active_browser: str | None = None

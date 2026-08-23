@@ -4,10 +4,12 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -21,7 +23,7 @@ from sqlalchemy.types import TypeDecorator
 
 from app.domain.agent import Agent, AgentStatus
 from app.domain.device import DeviceInventory
-from app.domain.heartbeat import Heartbeat, HeartbeatRowStatus
+from app.domain.heartbeat import Heartbeat, HeartbeatRowStatus, health_metrics_from_dict, health_metrics_to_dict
 from app.domain.applications import ApplicationActivity
 from app.domain.browser import BrowserActivity
 from app.domain.sessions import ComputerSession
@@ -253,6 +255,7 @@ class AgentHeartbeatRow(Base):
     heartbeat_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=HeartbeatRowStatus.ok.value)
+    health_metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (
         Index("ix_agent_heartbeats_agent_id", "agent_id"),
@@ -266,6 +269,7 @@ class AgentHeartbeatRow(Base):
             heartbeat_time=self.heartbeat_time,
             received_at=self.received_at,
             status=HeartbeatRowStatus(self.status),
+            health=health_metrics_from_dict(self.health_metrics),
         )
 
     @classmethod
@@ -275,6 +279,7 @@ class AgentHeartbeatRow(Base):
             heartbeat_time=heartbeat.heartbeat_time,
             received_at=heartbeat.received_at,
             status=heartbeat.status.value,
+            health_metrics=health_metrics_to_dict(heartbeat.health),
         )
 
 
@@ -696,3 +701,32 @@ class BrowserActivityRow(Base):
             collected_at=activity.collected_at,
             received_at=activity.received_at,
         )
+
+
+class AgentGeolocationRow(Base):
+    """Approximate IP-based location for one registered agent."""
+
+    __tablename__ = "agent_geolocation"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("agents.agent_id", name="fk_agent_geolocation_agent_id_agents"),
+        primary_key=True,
+    )
+    public_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    private_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    isp: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    asn: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    last_updated: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_agent_geolocation_public_ip", "public_ip"),
+        Index("ix_agent_geolocation_country", "country"),
+        Index("ix_agent_geolocation_city", "city"),
+    )

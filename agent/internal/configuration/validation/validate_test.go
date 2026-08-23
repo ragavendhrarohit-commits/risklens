@@ -180,33 +180,3 @@ func TestValidateDeviceUploadRejectsBadInterval(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
-
-func TestValidateBrowserActivityRejectsShortInterval(t *testing.T) {
-	cfg := validCfg(t)
-	cfg.BrowserActivity.IntervalRaw = "1s"
-	if err := Validate(&cfg); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("got %v", err)
-	}
-}
-
-func TestValidateBrowserActivityEnabledRequiresBackendURL(t *testing.T) {
-	cfg := validCfg(t)
-	cfg.BrowserActivity.Enabled = true
-	cfg.Networking.BackendURL = ""
-	if err := Validate(&cfg); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("got %v", err)
-	}
-}
-
-func TestValidateBrowserActivityAcceptsFifteenSeconds(t *testing.T) {
-	cfg := validCfg(t)
-	cfg.BrowserActivity.Enabled = true
-	cfg.BrowserActivity.IntervalRaw = "15s"
-	cfg.Networking.BackendURL = "http://127.0.0.1:8000"
-	if err := Validate(&cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.BrowserActivity.Interval != 15*time.Second {
-		t.Fatalf("interval = %s", cfg.BrowserActivity.Interval)
-	}
-}

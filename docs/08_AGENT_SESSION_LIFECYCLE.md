@@ -137,11 +137,11 @@ Application rows do not close computer sessions.
 
 Windows:
 
-- SCM Shutdown / PreShutdown → `OnWindowsShutdown` (4–8s timeout)
+- SCM Shutdown / PreShutdown → `OnWindowsShutdown` (4–8s timeout) — **requires Windows Service**
 - `CTRL_SHUTDOWN_EVENT`
 - `WM_ENDSESSION`
 
-Agent:
+Agent (when a shutdown signal is delivered):
 
 1. `recordEvent("shutdown")`
 2. `CloseSession("shutdown")` → `FlushClose`
@@ -157,6 +157,26 @@ POST body is closed-only → backend **SHUTDOWN** path:
 - `_upsert_one` **only that** `session_id`
 
 Shutdown must not patch other sessions. That matches the “update only `current_session_id`” rule **when the agent’s current id matches**. If two ACTIVE rows already exist, shutdown closes one and can leave the other ACTIVE.
+
+### Known limitation — console mode (2026-08-23)
+
+**Sessions correctly represent Windows logon sessions.** The architecture is intentional and must not be changed for shutdown reliability.
+
+The RiskLens Agent is often run as a **console executable**, not as a Windows Service. In that mode, SCM does not deliver `SERVICE_CONTROL_PRESHUTDOWN` / `SERVICE_CONTROL_SHUTDOWN`, so `OnWindowsShutdown()` → `FlushClose()` → `POST /api/v1/sessions` with `status=closed` is **not** guaranteed on a normal OS shutdown. Missing shutdown flush in console mode is **expected**, not a session-model defect.
+
+**Do not** work around this with heartbeat-timeout logout, artificial logout detection, or treating Fleet offline reconciliation as a Windows logout. Offline `last_seen` close remains last-resort presence cleanup only.
+
+When a Windows Service implementation is added later, verify end-to-end:
+
+1. `SERVICE_CONTROL_PRESHUTDOWN`
+2. `SERVICE_CONTROL_SHUTDOWN`
+3. `OnWindowsShutdown()`
+4. `FlushClose()`
+5. `POST /api/v1/sessions` with `status=closed`
+6. Database `logoff_at` / logout time
+7. New session after the next Windows login
+
+Until then, treat console-mode shutdown behavior as expected and continue development.
 
 ---
 
@@ -257,7 +277,7 @@ sequenceDiagram
 
 1. **Two ACTIVE rows can exist.** Login does not close other ACTIVE sessions in the same transaction. Fleet can show overlapping closed/open times after later offline/shutdown stamps.
 2. **Offline close refuses** when multiple ACTIVE rows exist, so the fallback cannot repair the overlap.
-3. **Missed logout** (agent not running at logoff, flush timeout, console process death) leaves an ACTIVE row. A later login with a new `session_id` inserts a second ACTIVE row.
+3. **Missed logout** (agent not running at logoff, flush timeout) leaves an ACTIVE row. A later login with a new `session_id` inserts a second ACTIVE row. Console-mode OS shutdown without SCM PreShutdown is a **known limitation**, not fixed via heartbeat/offline logout workarounds — see §5.
 4. **`MultipleActiveSessionsError` unused** — REPRO logs only.
 5. **`close_active_for_agent` unused** by the service.
 6. **No unique partial index** `UNIQUE (agent_id) WHERE status = 'active'`.

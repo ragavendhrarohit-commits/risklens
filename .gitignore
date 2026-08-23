@@ -10,3 +10,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 agent/bin/
+*.exe
+.pytest_cache/
+platform/tmp_runtime_debug.py

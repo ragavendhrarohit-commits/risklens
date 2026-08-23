@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from uuid import UUID
+
 from sqlalchemy import Select, asc, desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
@@ -11,8 +14,11 @@ from app.domain.applications import (
     ListApplicationActivityQuery,
     parse_sort,
 )
+from app.domain.productivity import ApplicationAggregate, IntervalPoint, TitleAggregate, interval_end
 from app.infrastructure.postgres.models import AgentRow, ApplicationActivityRow, ComputerSessionRow
 from app.repositories.application_activity_repository import ApplicationActivityRepository
+
+_BROWSER_EXECUTABLES = ("chrome.exe", "msedge.exe", "firefox.exe")
 
 _SORT_COLUMNS = {
     "started_at": ApplicationActivityRow.started_at,
@@ -107,6 +113,108 @@ class PostgresApplicationActivityRepository(ApplicationActivityRepository):
             return ApplicationActivityPage(
                 items=items, total=total, limit=query.limit, offset=query.offset
             )
+
+    def productivity_application_usage(
+        self,
+        agent_id: UUID,
+        *,
+        started_at_from: datetime | None = None,
+        started_at_to: datetime | None = None,
+    ) -> list[ApplicationAggregate]:
+        with self._session_factory() as session:
+            stmt = (
+                select(
+                    ApplicationActivityRow.application_name,
+                    func.coalesce(func.sum(ApplicationActivityRow.duration_seconds), 0),
+                    func.count(),
+                )
+                .where(ApplicationActivityRow.agent_id == agent_id)
+                .group_by(ApplicationActivityRow.application_name)
+                .order_by(
+                    desc(func.coalesce(func.sum(ApplicationActivityRow.duration_seconds), 0)),
+                    ApplicationActivityRow.application_name,
+                )
+            )
+            stmt = _apply_time_filters(stmt, started_at_from, started_at_to)
+            return [
+                ApplicationAggregate(
+                    application=name or "",
+                    duration_seconds=int(duration or 0),
+                    launch_count=int(launches or 0),
+                )
+                for name, duration, launches in session.execute(stmt).all()
+            ]
+
+    def productivity_browser_title_usage(
+        self,
+        agent_id: UUID,
+        *,
+        started_at_from: datetime | None = None,
+        started_at_to: datetime | None = None,
+    ) -> list[TitleAggregate]:
+        with self._session_factory() as session:
+            stmt = (
+                select(
+                    ApplicationActivityRow.window_title,
+                    ApplicationActivityRow.executable_name,
+                    func.coalesce(func.sum(ApplicationActivityRow.duration_seconds), 0),
+                    func.count(),
+                )
+                .where(ApplicationActivityRow.agent_id == agent_id)
+                .where(func.lower(ApplicationActivityRow.executable_name).in_(_BROWSER_EXECUTABLES))
+                .group_by(
+                    ApplicationActivityRow.window_title,
+                    ApplicationActivityRow.executable_name,
+                )
+            )
+            stmt = _apply_time_filters(stmt, started_at_from, started_at_to)
+            return [
+                TitleAggregate(
+                    window_title=title or "",
+                    executable_name=executable or "",
+                    duration_seconds=int(duration or 0),
+                    visit_count=int(visits or 0),
+                )
+                for title, executable, duration, visits in session.execute(stmt).all()
+            ]
+
+    def productivity_intervals(
+        self,
+        agent_id: UUID,
+        *,
+        started_at_from: datetime | None = None,
+        started_at_to: datetime | None = None,
+    ) -> list[IntervalPoint]:
+        with self._session_factory() as session:
+            stmt = (
+                select(
+                    ApplicationActivityRow.started_at,
+                    ApplicationActivityRow.stopped_at,
+                    ApplicationActivityRow.duration_seconds,
+                )
+                .where(ApplicationActivityRow.agent_id == agent_id)
+                .order_by(ApplicationActivityRow.started_at, ApplicationActivityRow.id)
+            )
+            stmt = _apply_time_filters(stmt, started_at_from, started_at_to)
+            return [
+                IntervalPoint(
+                    started_at=started_at,
+                    ended_at=interval_end(started_at, stopped_at, int(duration or 0)),
+                )
+                for started_at, stopped_at, duration in session.execute(stmt).all()
+            ]
+
+
+def _apply_time_filters(
+    stmt: Select,
+    started_at_from: datetime | None,
+    started_at_to: datetime | None,
+) -> Select:
+    if started_at_from is not None:
+        stmt = stmt.where(ApplicationActivityRow.started_at >= started_at_from)
+    if started_at_to is not None:
+        stmt = stmt.where(ApplicationActivityRow.started_at <= started_at_to)
+    return stmt
 
 
 def _apply_filters(stmt: Select, query: ListApplicationActivityQuery) -> Select:

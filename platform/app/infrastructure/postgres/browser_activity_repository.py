@@ -11,7 +11,7 @@ from app.domain.browser import (
     ListBrowserActivityQuery,
     parse_sort,
 )
-from app.infrastructure.postgres.models import BrowserActivityRow
+from app.infrastructure.postgres.models import AgentRow, BrowserActivityRow, ComputerSessionRow
 from app.repositories.browser_activity_repository import BrowserActivityRepository
 
 _SORT_COLUMNS = {
@@ -63,14 +63,31 @@ class PostgresBrowserActivityRepository(BrowserActivityRepository):
 
     def get(self, activity_id: str) -> BrowserActivityRecord | None:
         with self._session_factory() as session:
-            row = session.get(BrowserActivityRow, activity_id)
+            stmt = (
+                select(BrowserActivityRow, AgentRow.machine_name, ComputerSessionRow.username)
+                .outerjoin(AgentRow, AgentRow.agent_id == BrowserActivityRow.agent_id)
+                .outerjoin(
+                    ComputerSessionRow,
+                    ComputerSessionRow.session_id == BrowserActivityRow.session_id,
+                )
+                .where(BrowserActivityRow.id == activity_id)
+            )
+            row = session.execute(stmt).first()
             if row is None:
                 return None
-            return _to_record(row)
+            item, machine_name, username = row
+            return _to_record(item, machine_name or "", username or "")
 
     def list(self, query: ListBrowserActivityQuery) -> BrowserActivityPage:
         with self._session_factory() as session:
-            base = select(BrowserActivityRow)
+            base = (
+                select(BrowserActivityRow, AgentRow.machine_name, ComputerSessionRow.username)
+                .outerjoin(AgentRow, AgentRow.agent_id == BrowserActivityRow.agent_id)
+                .outerjoin(
+                    ComputerSessionRow,
+                    ComputerSessionRow.session_id == BrowserActivityRow.session_id,
+                )
+            )
             base = _apply_filters(base, query)
             count_stmt = select(func.count()).select_from(base.subquery())
             total = int(session.execute(count_stmt).scalar_one())
@@ -82,7 +99,10 @@ class PostgresBrowserActivityRepository(BrowserActivityRepository):
                 .offset(query.offset)
                 .limit(query.limit)
             )
-            items = [_to_record(item) for item in session.execute(stmt).scalars().all()]
+            items = [
+                _to_record(item, machine_name or "", username or "")
+                for item, machine_name, username in session.execute(stmt).all()
+            ]
             return BrowserActivityPage(
                 items=items, total=total, limit=query.limit, offset=query.offset
             )
@@ -95,10 +115,16 @@ def _apply_filters(stmt: Select, query: ListBrowserActivityQuery) -> Select:
         stmt = stmt.where(BrowserActivityRow.session_id == query.session_id)
     if query.domain:
         stmt = stmt.where(BrowserActivityRow.domain.ilike(f"%{query.domain}%"))
+    if query.started_at_from is not None:
+        stmt = stmt.where(BrowserActivityRow.started_at >= query.started_at_from)
+    if query.started_at_to is not None:
+        stmt = stmt.where(BrowserActivityRow.started_at <= query.started_at_to)
     return stmt
 
 
-def _to_record(row: BrowserActivityRow) -> BrowserActivityRecord:
+def _to_record(
+    row: BrowserActivityRow, machine_name: str, username: str
+) -> BrowserActivityRecord:
     return BrowserActivityRecord(
         id=row.id,
         session_id=row.session_id,
@@ -115,4 +141,6 @@ def _to_record(row: BrowserActivityRow) -> BrowserActivityRecord:
         duration_seconds=row.duration_seconds,
         collected_at=row.collected_at,
         received_at=row.received_at,
+        username=username,
+        machine_name=machine_name,
     )

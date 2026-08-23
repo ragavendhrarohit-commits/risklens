@@ -13,6 +13,7 @@ from app.domain.sessions import (
     SessionRecord,
     UnknownAgentError,
     UpsertSessionsCommand,
+    can_reopen_closed_session,
     merge_fallback_close,
     merge_session,
     session_from_record,
@@ -166,14 +167,6 @@ class SessionService:
             rows_affected=stored,
             session_ids_affected=[str(current.session_id)],
         )
-        if stored != 1:
-            lifecycle.error(
-                "OFFLINE RECONCILIATION ROW COUNT",
-                agent_id=str(agent_id),
-                current_session_id=str(current.session_id),
-                rows_affected=stored,
-                session_ids_affected=[str(current.session_id)],
-            )
         return stored
 
     def _upsert_one(
@@ -196,7 +189,16 @@ class SessionService:
             received_at=received_at,
         )
         existing = self._sessions.get(incoming.session_id)
-        if existing is not None and session_is_immutable(existing.status, existing.logoff_at):
+        known = self._sessions.list(
+            ListSessionsQuery(agent_id=command.agent_id, limit=MAX_LIMIT, sort="logon_at")
+        ).items
+        if (
+            existing is not None
+            and session_is_immutable(existing.status, existing.logoff_at)
+            and not can_reopen_closed_session(
+                session_from_record(existing), incoming, known_sessions=known
+            )
+        ):
             _logger.info(
                 "historical session unchanged",
                 extra={
@@ -206,9 +208,6 @@ class SessionService:
                 },
             )
             return 1
-        known = self._sessions.list(
-            ListSessionsQuery(agent_id=command.agent_id, limit=MAX_LIMIT, sort="logon_at")
-        ).items
         next_logon = _next_logon_for(
             known,
             incoming.session_id,
@@ -234,8 +233,15 @@ class SessionService:
             session_from_record(existing) if existing is not None else None,
             incoming,
             None,
+            known_sessions=known,
         )
-        if session_is_immutable(merged.status, merged.logoff_at) and existing is not None:
+        if (
+            session_is_immutable(merged.status, merged.logoff_at)
+            and existing is not None
+            and not can_reopen_closed_session(
+                session_from_record(existing), incoming, known_sessions=known
+            )
+        ):
             if existing.logoff_at == merged.logoff_at and existing.status == merged.status:
                 _logger.info(
                     "historical session unchanged",
@@ -278,7 +284,16 @@ class SessionService:
             received_at=received_at,
         )
         existing = self._sessions.get(incoming.session_id)
-        if existing is not None and session_is_immutable(existing.status, existing.logoff_at):
+        known = self._sessions.list(
+            ListSessionsQuery(agent_id=command.agent_id, limit=MAX_LIMIT, sort="logon_at")
+        ).items
+        if (
+            existing is not None
+            and session_is_immutable(existing.status, existing.logoff_at)
+            and not can_reopen_closed_session(
+                session_from_record(existing), incoming, known_sessions=known
+            )
+        ):
             return self._upsert_one(command, item, SESSION_STATUS_ACTIVE, received_at)
 
         actives_before = self._active_records(command.agent_id)
@@ -295,17 +310,17 @@ class SessionService:
             incoming_session_id=str(incoming.session_id),
             current_session_id=("" if current_active is None else str(current_active.session_id)),
             current_active_sessions=[str(record.session_id) for record in actives_before],
-            repository_method="_upsert_one -> upsert_many",
+            repository_method="activate_current",
             rows_before=dump_before,
         )
         lifecycle.banner(
             "REPOSITORY METHOD",
             agent_id=str(command.agent_id),
-            method="upsert_many",
+            method="activate_current",
             session_id=str(incoming.session_id),
             kind=kind,
         )
-        written = self._upsert_one(command, item, SESSION_STATUS_ACTIVE, received_at)
+        written = self._sessions.activate_current(incoming)
         return written
 
     def _session_dump(self, agent_id) -> list[dict]:

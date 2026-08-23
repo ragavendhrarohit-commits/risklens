@@ -19,6 +19,7 @@ from app.domain.sessions.entity import (
     session_duration_seconds,
     session_from_record,
     session_is_immutable,
+    can_reopen_closed_session,
 )
 from app.domain.sessions.errors import (
     InvalidSessionQueryError,
@@ -52,4 +53,5 @@ __all__ = [
     "session_duration_seconds",
     "session_from_record",
     "session_is_immutable",
+    "can_reopen_closed_session",
 ]

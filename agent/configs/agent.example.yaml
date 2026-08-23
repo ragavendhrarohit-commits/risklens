@@ -44,10 +44,3 @@ activity:
   enabled: true
   timeout: 15s
   interval: 15s
-
-browser_activity:
-  enabled: true
-  timeout: 15s
-  interval: 15s
-  chromium_extension_id: ""
-  firefox_extension_id: browser-activity@risklens.local

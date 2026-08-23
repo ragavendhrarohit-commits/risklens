@@ -96,11 +96,17 @@ This file is the implementation checklist from source, not a sprint plan.
 
 ---
 
+## Known limitations (accepted)
+
+1. **Console-mode shutdown flush (2026-08-23).** Sessions correctly represent Windows logon sessions. When the agent runs as a console executable (not a Windows Service), SCM `SERVICE_CONTROL_PRESHUTDOWN` / `SERVICE_CONTROL_SHUTDOWN` are not delivered, so `OnWindowsShutdown` → `FlushClose` → closed session POST is not guaranteed on normal OS shutdown. That is **expected**. Do **not** work around with heartbeat-timeout or artificial logout detection. Re-verify the full SCM shutdown chain when Windows Service packaging is added (see [08_AGENT_SESSION_LIFECYCLE.md](08_AGENT_SESSION_LIFECYCLE.md) §5).
+
+---
+
 ## Known bugs / behavioural defects (from code + observed)
 
 1. **Overlapping ACTIVE sessions** for one `agent_id` are representable. Login insert does not close other ACTIVE rows. Observed on Fleet for `LAPTOP-8VQ40K6U` (login while previous still ACTIVE; logout times not equal to next login).
 2. **Offline reconciliation cannot repair** that state (requires exactly one ACTIVE).
-3. **Missed logoff** (agent stopped, flush timeout, console death) leaves ACTIVE rows.
+3. **Missed logoff** when the agent is not running at WTS logoff, or flush times out, leaves ACTIVE rows. (Distinct from console-mode OS shutdown above.)
 4. **Presence Offline while the user is at the keyboard** if `RiskLensAgent` is not running (no Windows service in one observed MSI setup; last heartbeat matched UI Last Seen).
 5. **API `ERR_CONNECTION_REFUSED` on :8000** when Uvicorn exited because Postgres/Docker was down. `/health` does not detect that after the process is gone — the TCP connection simply fails.
 6. **Opening `http://0.0.0.0:8000` in a browser** is invalid (`ERR_ADDRESS_INVALID`). Bind address is not a browse URL.

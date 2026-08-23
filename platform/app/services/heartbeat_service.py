@@ -27,16 +27,20 @@ class HeartbeatService:
         *,
         clock=None,
         projection=None,
+        geolocation=None,
     ) -> None:
         self._agents = agents
         self._heartbeats = heartbeats
         self._clock = clock or _default_clock
         self._projection = projection
+        self._geolocation = geolocation
 
     def record(
         self,
         path_agent_id: UUID,
         command: RecordHeartbeatCommand,
+        *,
+        client_ip: str | None = None,
     ) -> Heartbeat:
         if path_agent_id != command.agent_id:
             raise AgentIDMismatchError(path_agent_id, command.agent_id)
@@ -48,10 +52,13 @@ class HeartbeatService:
             heartbeat_time=command.timestamp,
             received_at=self._clock(),
             status=HeartbeatRowStatus.ok,
+            health=command.health,
         )
         stored = self._heartbeats.append(row)
         if self._projection is not None:
             self._projection.on_heartbeat(stored.agent_id, stored.heartbeat_time, stored.received_at)
+        if self._geolocation is not None:
+            self._geolocation.ingest_heartbeat(command, client_ip=client_ip)
         _logger.info(
             "heartbeat recorded",
             extra={

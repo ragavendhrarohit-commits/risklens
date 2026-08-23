@@ -3,6 +3,7 @@ const PLATFORM_API_BASE = String(window.RISKLENS_PLATFORM_API || "http://127.0.0
   ""
 );
 const API_TIMEOUT_MS = 10000;
+const LIST_CACHE_TTL_MS = 30000;
 
 const state = {
   view: "fleet",
@@ -27,6 +28,7 @@ const state = {
     },
     selectedId: null,
     tab: "overview",
+    healthRefreshTimer: null,
     detail: null,
     detailLoading: false,
     detailError: null,
@@ -34,11 +36,19 @@ const state = {
     software: null,
     sessions: null,
     applicationActivity: null,
-    websiteUsage: null,
+    browserActivity: null,
+    browserSort: "-duration_seconds",
+    browserTimelineFilter: null,
     health: null,
-    policy: null,
+    healthLoading: false,
+    healthError: null,
     extraLoading: false,
     extraError: null,
+    extraTab: null,
+    extraLoadGen: 0,
+    fetchedAt: 0,
+    queryKey: "",
+    loadGen: 0,
   },
   users: {
     items: [],
@@ -51,6 +61,9 @@ const state = {
     enabled: "",
     loading: false,
     error: null,
+    fetchedAt: 0,
+    queryKey: "",
+    loadGen: 0,
   },
   software: {
     items: [],
@@ -64,20 +77,146 @@ const state = {
     architecture: "",
     loading: false,
     error: null,
+    fetchedAt: 0,
+    queryKey: "",
+    loadGen: 0,
+  },
+  productivity: {
+    agents: [],
+    agentId: "",
+    report: null,
+    loading: false,
+    agentsLoading: false,
+    error: null,
+    agentsFetchedAt: 0,
+    reportQueryKey: "",
+    loadGen: 0,
+    reportGen: 0,
+  },
+  geolocation: {
+    items: [],
+    summary: {
+      managed_devices: 0,
+      online_devices: 0,
+      countries: 0,
+      cities: 0,
+    },
+    q: "",
+    status: "",
+    country: "",
+    city: "",
+    isp: "",
+    loading: false,
+    error: null,
+    selectedId: null,
+    selected: null,
+    refreshTimer: null,
+    lastFingerprint: "",
+    fetchedAt: 0,
+    queryKey: "",
+    loadGen: 0,
+    map: null,
+    markers: [],
   },
 };
 
 const views = document.querySelectorAll(".view");
 const navLinks = document.querySelectorAll(".nav-link");
+let routingFromHash = false;
+let applicationActivityTimeDebounce = null;
+
+function isCacheFresh(fetchedAt, ttl = LIST_CACHE_TTL_MS) {
+  return Boolean(fetchedAt) && Date.now() - fetchedAt < ttl;
+}
+
+function stableQueryKey(value) {
+  return JSON.stringify(value);
+}
+
+function fleetQueryParams() {
+  const f = state.fleet;
+  return {
+    q: f.q,
+    status: f.status,
+    tag: f.tag,
+    limit: f.limit,
+    offset: f.offset,
+    sort: f.sort,
+  };
+}
+
+function fleetQueryKey() {
+  return stableQueryKey(fleetQueryParams());
+}
+
+function renderFleetFromCache() {
+  renderFleetSummary();
+  renderFleetStatus();
+  renderFleetTable();
+  renderFleetPagination();
+  updateFleetSortIndicators();
+}
+
+function manageSessionDurationTicker() {
+  const active =
+    state.view === "fleet-detail" &&
+    state.fleet.tab === "sessions" &&
+    Boolean(document.querySelector("[data-session-duration-live]"));
+  if (active) startSessionDurationTicker();
+  else stopSessionDurationTicker();
+}
+
+function hashPath() {
+  const hash = String(window.location.hash || "");
+  const path = hash.split("?")[0];
+  return path || "#/fleet";
+}
+
+const REMOVED_NAV_VIEWS = new Set(["alerts", "incidents", "policies", "administration", "groups"]);
+const REMOVED_FLEET_TABS = new Set([
+  "alerts",
+  "detections",
+  "response",
+  "threat-timeline",
+  "health",
+  "timeline",
+  "processes",
+  "services",
+  "network",
+  "policies",
+]);
+
+function normalizeFleetTab(tab) {
+  if (REMOVED_FLEET_TABS.has(tab)) return "overview";
+  return tab || "overview";
+}
+
+function hashForView(view) {
+  if (view === "fleet-detail") return null;
+  if (REMOVED_NAV_VIEWS.has(view)) return "#/fleet";
+  if (view === "reports") return "#/productivity";
+  if (view === "fleet") return "#/fleet";
+  return `#/${view}`;
+}
 
 function primaryNavView(view) {
   if (view === "fleet-detail") return "fleet";
-  if (view === "users" || view === "software") return "reports";
-  if (view === "groups") return "administration";
+  if (view === "users" || view === "software" || view === "productivity" || view === "reports") {
+    return "reports";
+  }
   return view;
 }
 
-function setView(view) {
+function setView(view, options = {}) {
+  if (REMOVED_NAV_VIEWS.has(view)) {
+    view = "fleet";
+  }
+  if (view === "reports") {
+    view = "productivity";
+  }
+  if (!document.getElementById(`view-${view}`)) return;
+  const force = options.force === true;
+  const viewChanged = state.view !== view;
   state.view = view;
   views.forEach((section) => {
     section.classList.toggle("hidden", section.id !== `view-${view}`);
@@ -87,14 +226,43 @@ function setView(view) {
     link.classList.toggle("nav-link-active", link.dataset.view === navView);
   });
   if (view === "fleet" || view === "dashboard") {
-    loadFleet();
+    loadFleet({ force, silent: !viewChanged && !force });
   }
   if (view === "users") {
-    loadUsers();
+    loadUsers({ force, silent: !viewChanged && !force });
   }
   if (view === "software") {
-    loadSoftware();
+    loadSoftware({ force, silent: !viewChanged && !force });
   }
+  if (view === "productivity") {
+    loadProductivityPage({ force, silent: !viewChanged && !force });
+  }
+  if (view === "geolocation") {
+    loadGeolocationPage({ force, silent: !viewChanged && !force });
+  } else {
+    stopGeolocationAutoRefresh();
+  }
+  if (view !== "fleet-detail" || state.fleet.tab !== "overview") {
+    stopHealthAutoRefresh();
+  }
+  manageSessionDurationTicker();
+}
+
+function formatRelativeLastSeen(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 45) return "Just now";
+  if (seconds < 3600) {
+    const minutes = Math.max(1, Math.floor(seconds / 60));
+    return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  }
+  if (seconds < 86400) {
+    const hours = Math.max(1, Math.floor(seconds / 3600));
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+  return formatTime(value);
 }
 
 function formatTime(value) {
@@ -121,6 +289,197 @@ function formatBytes(value) {
     idx += 1;
   }
   return `${size.toFixed(size >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
+function formatPercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return `${n.toFixed(n >= 10 ? 0 : 1)}%`;
+}
+
+function healthUsageBar(percent) {
+  const width = Math.max(0, Math.min(100, Number(percent) || 0));
+  return `<div class="health-usage-track" aria-hidden="true">
+    <div class="health-usage-fill" style="width:${width}%"></div>
+  </div>`;
+}
+
+function formatSystemUptime(health, item) {
+  const seconds =
+    health?.uptime_seconds ?? health?.system_uptime_seconds ?? item?.uptime_seconds ?? null;
+  if (seconds != null && Number.isFinite(Number(seconds))) {
+    return formatDurationSeconds(Number(seconds));
+  }
+  const boot = health?.boot_time || item?.boot_time;
+  if (!boot) return null;
+  const start = new Date(boot);
+  if (Number.isNaN(start.getTime())) return null;
+  return formatDurationSeconds(Math.max(0, Math.floor((Date.now() - start.getTime()) / 1000)));
+}
+
+function renderCpuUsageCard(health) {
+  if (health?.cpu_percent == null) {
+    return `<p class="text-sm text-mist-400">Waiting for the next agent heartbeat with CPU metrics.</p>`;
+  }
+  return `<div class="health-usage-row">
+      ${healthUsageBar(health.cpu_percent)}
+      <div class="health-usage-caption">${escapeHtml(formatPercent(health.cpu_percent))}</div>
+    </div>`;
+}
+
+function renderMemoryUsageCard(health) {
+  if (!health?.memory) {
+    return `<p class="text-sm text-mist-400">Memory metrics not reported yet.</p>`;
+  }
+  const m = health.memory;
+  return `<div class="health-usage-row">
+      ${healthUsageBar(m.percent)}
+      <div class="health-usage-caption">
+        ${escapeHtml(formatBytes(m.used))} / ${escapeHtml(formatBytes(m.total))}
+        (${escapeHtml(formatPercent(m.percent))})
+      </div>
+    </div>`;
+}
+
+function renderDiskUsageCard(health, item) {
+  const disks = Array.isArray(health?.disks) ? health.disks : [];
+  if (disks.length) {
+    return disks
+      .map((disk) => {
+        const name = disk.name || "Disk";
+        return `<article class="health-disk-card">
+          <h3 class="health-section-title">Disk ${escapeHtml(name)}</h3>
+          <div class="health-usage-row">
+            ${healthUsageBar(disk.percent)}
+            <div class="health-usage-caption">
+              ${escapeHtml(formatBytes(disk.used))} / ${escapeHtml(formatBytes(disk.total))}
+              (${escapeHtml(formatPercent(disk.percent))})
+            </div>
+          </div>
+        </article>`;
+      })
+      .join("");
+  }
+  if (item?.disk_total_bytes != null) {
+    const total = Number(item.disk_total_bytes);
+    const free = Number(item.disk_free_bytes);
+    const used = Number.isFinite(total) && Number.isFinite(free) ? Math.max(0, total - free) : null;
+    const percent =
+      Number.isFinite(total) && total > 0 && used != null ? (used / total) * 100 : null;
+    return `<div class="health-usage-row">
+        ${healthUsageBar(percent)}
+        <div class="health-usage-caption">
+          ${escapeHtml(formatBytes(used))} / ${escapeHtml(formatBytes(total))}
+          (${escapeHtml(formatPercent(percent))})
+        </div>
+      </div>`;
+  }
+  return `<p class="text-sm text-mist-400">Disk metrics not reported yet.</p>`;
+}
+
+/** Health cards reused on Computer Overview (formerly the Health tab). */
+function renderOverviewHealthSection(health, item, { loading = false, error = null } = {}) {
+  if (error && !health) {
+    return `<p class="device-error">${escapeHtml(error)}</p>`;
+  }
+  if (loading && !health) {
+    return `<p class="text-mist-400">Loading health…</p>`;
+  }
+  if (!health) {
+    return `<p class="text-mist-400">No health data.</p>`;
+  }
+
+  const uptime = formatSystemUptime(health, item);
+  const metaRows = [
+    ["Agent Status", presenceLabel(health.status)],
+    ["Last Heartbeat", item?.last_seen ? formatRelativeLastSeen(item.last_seen) : formatHeartbeatAge(health.heartbeat_age_seconds)],
+    ["Last Communication", formatTime(health.last_communication_at)],
+    ["Last Inventory", formatTime(health.last_inventory_at)],
+  ];
+  if (uptime) {
+    metaRows.push(["System Uptime", uptime]);
+  }
+
+  return `<div class="health-panel space-y-4">
+    <div class="overview-health-meta">${definitionListHtml(metaRows)}</div>
+    <div class="overview-health-grid">
+      <section class="health-card">
+        <h2 class="health-section-heading">CPU Usage</h2>
+        ${renderCpuUsageCard(health)}
+      </section>
+      <section class="health-card">
+        <h2 class="health-section-heading">Memory Usage</h2>
+        ${renderMemoryUsageCard(health)}
+      </section>
+      <section class="health-card overview-health-disk">
+        <h2 class="health-section-heading">Disk Usage</h2>
+        <div class="space-y-3">${renderDiskUsageCard(health, item)}</div>
+      </section>
+    </div>
+  </div>`;
+}
+
+function formatHeartbeatAge(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n < 45) return "Just now";
+  if (n < 3600) {
+    const minutes = Math.max(1, Math.floor(n / 60));
+    return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  }
+  return formatDurationSeconds(n);
+}
+
+function stopHealthAutoRefresh() {
+  const f = state.fleet;
+  if (f.healthRefreshTimer) {
+    clearInterval(f.healthRefreshTimer);
+    f.healthRefreshTimer = null;
+  }
+}
+
+function manageHealthAutoRefresh() {
+  if (state.view !== "fleet-detail" || state.fleet.tab !== "overview" || !state.fleet.selectedId) {
+    stopHealthAutoRefresh();
+    return;
+  }
+  if (state.fleet.healthRefreshTimer) return;
+  state.fleet.healthRefreshTimer = setInterval(() => {
+    if (state.view === "fleet-detail" && state.fleet.tab === "overview" && state.fleet.selectedId) {
+      refreshOverviewHealth({ silent: true });
+    } else {
+      stopHealthAutoRefresh();
+    }
+  }, 8000);
+}
+
+async function refreshOverviewHealth({ silent = false } = {}) {
+  const f = state.fleet;
+  if (!f.selectedId || f.tab !== "overview" || state.view !== "fleet-detail") return;
+  if (f.healthLoading) return;
+  const requestAgentId = f.selectedId;
+  const gen = ++f.extraLoadGen;
+  f.healthLoading = true;
+  if (!silent || !f.health) {
+    renderFleetDetail();
+  }
+  try {
+    const health = await fetchJson(
+      platformUrl(`/api/v1/fleet/${encodeURIComponent(requestAgentId)}/health`)
+    );
+    if (gen !== f.extraLoadGen || f.selectedId !== requestAgentId || f.tab !== "overview") return;
+    f.health = health;
+    f.healthError = null;
+  } catch (error) {
+    if (gen !== f.extraLoadGen || f.selectedId !== requestAgentId || f.tab !== "overview") return;
+    f.healthError = error.message || "Failed to load health.";
+  } finally {
+    if (gen !== f.extraLoadGen) return;
+    f.healthLoading = false;
+    if (f.selectedId !== requestAgentId || f.tab !== "overview") return;
+    renderFleetDetail();
+    manageHealthAutoRefresh();
+  }
 }
 
 function escapeHtml(value) {
@@ -342,46 +701,157 @@ function renderFleetPagination() {
 }
 
 function fleetAgentIdFromHash() {
-  const match = String(window.location.hash || "").match(/^#\/fleet\/([0-9a-fA-F-]{36})$/i);
+  const match = hashPath().match(/^#\/fleet\/([0-9a-fA-F-]{36})$/i);
   return match ? match[1] : null;
 }
 
+function appViewFromHash() {
+  const path = hashPath();
+  const match = path.match(/^#\/([^/]+)$/);
+  return match ? match[1] : null;
+}
+
+function navigateToView(view) {
+  const next = hashForView(view);
+  if (!next) {
+    setView(view);
+    return;
+  }
+  if (hashPath() !== next) {
+    window.location.hash = next;
+    return;
+  }
+  if (state.view !== view) {
+    setView(view);
+  }
+}
+
+function applyAppHash() {
+  if (routingFromHash) return false;
+  routingFromHash = true;
+  try {
+    const agentId = fleetAgentIdFromHash();
+    if (agentId) {
+      loadFleetDetail(agentId);
+      return true;
+    }
+    const view = appViewFromHash();
+    if (view && REMOVED_NAV_VIEWS.has(view)) {
+      window.location.hash = "#/fleet";
+      return true;
+    }
+    if (view === "reports") {
+      window.location.hash = "#/productivity";
+      return true;
+    }
+    if (view && document.getElementById(`view-${view}`)) {
+      if (state.view !== view) {
+        setView(view);
+      }
+      return true;
+    }
+    if (hashPath() === "#/fleet" || !window.location.hash) {
+      if (state.view !== "fleet") {
+        setView("fleet");
+      }
+      return true;
+    }
+    return false;
+  } finally {
+    routingFromHash = false;
+  }
+}
+
 function renderEndpointOverview(item) {
-  const cards = [
+  const f = state.fleet;
+  const health = f.health;
+  const storageLabel = (() => {
+    const disks = Array.isArray(health?.disks) ? health.disks : [];
+    if (disks.length) {
+      return disks
+        .map((disk) => {
+          const name = disk.name ? `${disk.name} ` : "";
+          return `${name}${formatBytes(disk.total)}`.trim();
+        })
+        .join(", ");
+    }
+    return formatBytes(item.disk_total_bytes);
+  })();
+
+  const memoryLabel =
+    health?.memory?.total != null ? formatBytes(health.memory.total) : formatBytes(item.memory_bytes);
+
+  const cpuModel = health?.cpu_model || item.cpu_model || "";
+
+  const computerInfo = definitionListHtml([
     ["Hostname", item.hostname || item.machine_name],
-    ["Machine", item.machine_name],
-    ["Current User", item.current_user],
-    ["Agent ID", item.agent_id],
-    ["Operating System", item.operating_system],
-    ["Version", item.agent_version],
-    ["Policy", item.policy_name],
-    ["Group", ""],
-    ["Tags", Array.isArray(item.tags) && item.tags.length ? item.tags.join(", ") : ""],
-    ["Status", presenceLabel(item.online_status)],
+    ["User", item.current_user],
+    ["Operating System", item.operating_system || item.os_version],
+    ["Agent Version", item.agent_version],
     ["Last Seen", formatTime(item.last_seen)],
-  ];
-  const cardHtml = `<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 mb-5">${cards
-    .map(
-      ([label, value]) =>
-        `<article class="stat-card"><div class="stat-label">${escapeHtml(label)}</div><div class="stat-value text-base">${
-          label === "Status" ? value : displayValue(value)
-        }</div></article>`
-    )
-    .join("")}</div>`;
-  return `${cardHtml}<h3 class="text-sm font-semibold mb-3">Hardware inventory (this endpoint only)</h3>${definitionList([
-    ["OS version", item.os_version],
-    ["Windows build", item.windows_build],
-    ["Architecture", item.architecture],
+    ["Online Status", { html: formatPresenceStatus(item.online_status) }],
+  ]);
+
+  const hardware = definitionListHtml([
+    ["CPU Model", cpuModel],
+    ["Memory", memoryLabel],
+    ["Storage", storageLabel],
     ["Manufacturer", item.manufacturer],
     ["Model", item.model],
-    ["Serial number", item.serial_number],
-    ["CPU model", item.cpu_model],
-    ["CPU cores", item.cpu_cores],
-    ["Memory", formatBytes(item.memory_bytes)],
-    ["Disk total", formatBytes(item.disk_total_bytes)],
-    ["Disk free", formatBytes(item.disk_free_bytes)],
-    ["Last inventory", formatTime(item.last_inventory_at)],
-  ])}`;
+  ]);
+
+  const network = definitionListHtml([
+    ["Public IP", item.ip_address || item.public_ip],
+    ["Private IP", item.private_ip],
+    ["MAC Address", item.mac_address],
+    ["Geo Location", item.geo_location || item.location || formatGeoSummary(item)],
+  ]);
+
+  return `<div class="fleet-overview space-y-6">
+    <section class="fleet-overview-section">
+      <h2 class="fleet-overview-heading">Computer Information</h2>
+      ${computerInfo}
+    </section>
+    <section class="fleet-overview-section">
+      <h2 class="fleet-overview-heading">Health</h2>
+      ${renderOverviewHealthSection(health, item, {
+        loading: f.healthLoading,
+        error: f.healthError,
+      })}
+    </section>
+    <section class="fleet-overview-section">
+      <h2 class="fleet-overview-heading">Hardware</h2>
+      ${hardware}
+    </section>
+    <section class="fleet-overview-section">
+      <h2 class="fleet-overview-heading">Network</h2>
+      ${network}
+    </section>
+  </div>`;
+}
+
+function formatGeoSummary(item) {
+  const parts = [item.city, item.region, item.country].filter(Boolean);
+  return parts.length ? parts.join(", ") : "";
+}
+
+function formatBrowserTimeSpent(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  const total = Math.floor(n);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  if (minutes) return `${minutes}m`;
+  return `${secs}s`;
+}
+
+function formatBrowserStatus(status) {
+  const key = String(status || "").toLowerCase();
+  if (key === "active") return "Active";
+  if (key === "inactive") return "Inactive";
+  return displayValue(status);
 }
 
 function formatDurationSeconds(seconds) {
@@ -406,11 +876,18 @@ function formatSessionStatus(status) {
 function startSessionDurationTicker() {
   if (window.__risklensSessionTicker) return;
   window.__risklensSessionTicker = setInterval(() => {
+    if (state.view !== "fleet-detail" || state.fleet.tab !== "sessions") return;
     document.querySelectorAll("[data-session-duration-live]").forEach((el) => {
       const logon = el.getAttribute("data-logon-at");
       el.textContent = formatDurationSeconds(liveDurationSeconds(logon, null, 0));
     });
   }, 1000);
+}
+
+function stopSessionDurationTicker() {
+  if (!window.__risklensSessionTicker) return;
+  clearInterval(window.__risklensSessionTicker);
+  window.__risklensSessionTicker = null;
 }
 
 function liveDurationSeconds(startedAt, stoppedAt, storedSeconds) {
@@ -429,9 +906,16 @@ function liveDurationSeconds(startedAt, stoppedAt, storedSeconds) {
 
 function renderFleetSessionsTable(page) {
   const items = page?.items || [];
+  const activeCount = items.filter((item) => String(item.status || "").toLowerCase() === "active").length;
+  const online = state.fleet.detail?.online_status === "online";
+  let notice =
+    '<p class="text-xs text-mist-400 mb-3">Sessions are not filtered by the Global Time Filter. They show all logon history reported by the agent.</p>';
+  if (online && !activeCount) {
+    notice +=
+      '<p class="text-xs text-amber-300/90 mb-3">This computer is online but has no active session record. Historical sessions below may still appear. Restart the agent if a current session is missing.</p>';
+  }
   if (!items.length) {
-    return `<p class="text-mist-400 mb-3">Computer → Session → Account → Application Activity</p>
-      <p class="device-empty">No sessions reported for this computer.</p>`;
+    return `${notice}<p class="device-empty">No sessions reported for this computer yet.</p>`;
   }
   const rows = items
     .map((item) => {
@@ -451,7 +935,7 @@ function renderFleetSessionsTable(page) {
     })
     .join("");
   startSessionDurationTicker();
-  return `<p class="text-mist-400 mb-3">Computer → Session → Account → Application Activity</p>
+  return `${notice}<p class="text-mist-400 mb-3">Computer → Session → Account → Application Activity</p>
     <table class="w-full text-sm"><thead class="text-left text-mist-400 text-xs uppercase tracking-wide"><tr>
     <th class="py-2 pr-3">Computer</th><th class="py-2 pr-3">Account</th>
     <th class="py-2 pr-3">Login Time</th><th class="py-2 pr-3">Logout Time</th>
@@ -463,7 +947,9 @@ function renderFleetSessionsTable(page) {
 function renderFleetApplicationActivityTable(page) {
   const items = page?.items || [];
   if (!items.length) {
-    return `<p class="device-empty">No application activity during the selected time range.</p>`;
+    return `${activityTimeRangeNotice()}<p class="device-empty">No application activity during ${escapeHtml(
+      globalTimeFilterLabel()
+    )}. This computer may still have older activity — try Last 24 Hours or Last 7 Days.</p>`;
   }
   const rows = items
     .map((item) => {
@@ -479,7 +965,7 @@ function renderFleetApplicationActivityTable(page) {
       </tr>`;
     })
     .join("");
-  return `<table class="w-full text-sm"><thead class="text-left text-mist-400 text-xs uppercase tracking-wide"><tr>
+  return `${activityTimeRangeNotice()}<table class="w-full text-sm"><thead class="text-left text-mist-400 text-xs uppercase tracking-wide"><tr>
     <th class="py-2 pr-3">Application</th><th class="py-2 pr-3">Executable</th>
     <th class="py-2 pr-3">Window Title</th><th class="py-2 pr-3">Started</th>
     <th class="py-2 pr-3">Stopped</th><th class="py-2 pr-3">Duration</th>
@@ -487,28 +973,193 @@ function renderFleetApplicationActivityTable(page) {
     <p class="text-xs text-mist-400 mt-3">${items.length} of ${page.total} activity row(s)</p>`;
 }
 
-function renderWebsiteUsageTable(page) {
-  const items = page?.items || [];
-  if (!items.length) {
-    return `<p class="text-mist-400 mb-3">Website usage is rolled up from Application Activity window titles. No browser rows for this computer.</p>
-      <p class="device-empty">No website usage to summarize.</p>`;
+function formatBrowserClock(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function browserWebsite(value) {
+  const text = String(value || "").trim();
+  return text || "Unknown Website";
+}
+
+function firstBrowserTitle(...values) {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text && text !== "—" && text !== "-") return text;
   }
-  const rows = items
-    .map((item) => {
+  return "";
+}
+
+function flattenBrowserSessions(items) {
+  const sessions = [];
+  for (const item of items || []) {
+    const parentWebsite = browserWebsite(item.website);
+    const timeline = Array.isArray(item.timeline) ? item.timeline : [];
+    if (timeline.length) {
+      for (const visit of timeline) {
+        sessions.push({
+          website: browserWebsite(visit.website || parentWebsite),
+          page_title: firstBrowserTitle(
+            visit.page_title,
+            visit.window_title,
+            visit.title,
+            item.page_title,
+            item.window_title
+          ),
+          started_at: visit.started_at,
+          stopped_at: visit.stopped_at,
+          duration_seconds: visit.duration_seconds,
+        });
+      }
+    } else if (item.started_at) {
+      sessions.push({
+        website: parentWebsite,
+        page_title: firstBrowserTitle(item.page_title, item.window_title, item.title),
+        started_at: item.started_at,
+        stopped_at: item.stopped_at,
+        duration_seconds: item.duration_seconds,
+      });
+    }
+  }
+  return sessions;
+}
+
+function filterBrowserSessions(sessions, selectedWebsite) {
+  if (!selectedWebsite) return [];
+  const selected = browserWebsite(selectedWebsite).toLowerCase();
+  return sessions.filter((row) => browserWebsite(row.website).toLowerCase() === selected);
+}
+
+function groupBrowserSummary(sessions) {
+  const groups = new Map();
+  for (const row of sessions) {
+    const website = browserWebsite(row.website);
+    let group = groups.get(website);
+    if (!group) {
+      group = { website, duration_seconds: 0, visits: 0 };
+      groups.set(website, group);
+    }
+    group.duration_seconds += liveDurationSeconds(row.started_at, row.stopped_at, row.duration_seconds);
+    group.visits += 1;
+  }
+  return [...groups.values()]
+    .map((group) => ({ ...group, total_time: formatBrowserTimeSpent(group.duration_seconds) }))
+    .sort((a, b) => b.duration_seconds - a.duration_seconds);
+}
+
+function browserVisitsForWebsite(items, selectedWebsite) {
+  if (!selectedWebsite) return [];
+  const selected = browserWebsite(selectedWebsite).toLowerCase();
+  const visits = [];
+  for (const item of items || []) {
+    if (browserWebsite(item.website).toLowerCase() !== selected) continue;
+    const timeline = Array.isArray(item.timeline) ? item.timeline : [];
+    if (timeline.length) {
+      visits.push(...timeline);
+      continue;
+    }
+    if (item.started_at) {
+      visits.push({
+        page_title: firstBrowserTitle(item.page_title, item.window_title, item.title),
+        started_at: item.started_at,
+        stopped_at: item.stopped_at,
+        duration_seconds: item.duration_seconds,
+      });
+    }
+  }
+  return visits;
+}
+
+function renderBrowserSessionTable(visits) {
+  const rows = [...visits]
+    .sort((a, b) => new Date(a.started_at) - new Date(b.started_at))
+    .map((visit) => {
+      const duration = formatBrowserTimeSpent(
+        liveDurationSeconds(visit.started_at, visit.stopped_at, visit.duration_seconds)
+      );
+      const title = firstBrowserTitle(visit.page_title, visit.window_title, visit.title);
       return `<tr>
-        <td class="py-2 pr-3">${displayValue(item.browser)}</td>
-        <td class="py-2 pr-3">${displayValue(item.website)}</td>
-        <td class="py-2 pr-3 whitespace-nowrap">${escapeHtml(item.total_time || formatDurationSeconds(item.duration_seconds))}</td>
-        <td class="py-2">${displayValue(item.category)}</td>
+        <td class="py-2 pr-3 whitespace-nowrap font-mono text-xs">${escapeHtml(formatBrowserClock(visit.started_at))}</td>
+        <td class="py-2 pr-3 whitespace-nowrap font-mono text-xs">${escapeHtml(
+          visit.stopped_at ? formatBrowserClock(visit.stopped_at) : ""
+        )}</td>
+        <td class="py-2 pr-3">${title ? `<span title="${escapeHtml(title)}">${escapeHtml(title)}</span>` : "—"}</td>
+        <td class="py-2">${escapeHtml(duration)}</td>
       </tr>`;
     })
     .join("");
-  return `<p class="text-mist-400 mb-3">Website usage is rolled up from existing Application Activity window titles. Time is not counted twice.</p>
-    <table class="w-full text-sm"><thead class="text-left text-mist-400 text-xs uppercase tracking-wide"><tr>
-    <th class="py-2 pr-3">Browser</th><th class="py-2 pr-3">Website</th>
-    <th class="py-2 pr-3">Total Time Spent</th><th class="py-2">Category</th>
-    </tr></thead><tbody class="divide-y divide-ink-600">${rows}</tbody></table>
-    <p class="text-xs text-mist-400 mt-3">${items.length} website(s)</p>`;
+  if (!rows) {
+    return `<p class="browser-detail-empty">No browsing sessions for this website during the selected time range.</p>`;
+  }
+  return `<table class="browser-sessions-table w-full text-sm">
+    <thead class="text-left text-mist-400 text-xs uppercase tracking-wide">
+      <tr>
+        <th class="py-2 pr-3">Start</th>
+        <th class="py-2 pr-3">End</th>
+        <th class="py-2 pr-3">Page Title</th>
+        <th class="py-2">Duration</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-ink-600">${rows}</tbody>
+  </table>`;
+}
+
+function renderBrowserActivityDetail(selectedWebsite, items) {
+  if (!selectedWebsite) {
+    return `<section class="browser-detail-section">
+      <p class="browser-detail-empty">Select a website to view browsing sessions.</p>
+    </section>`;
+  }
+  const visits = browserVisitsForWebsite(items, selectedWebsite);
+  return `<section class="browser-detail-section">
+    <h3 class="browser-section-heading">Browsing Sessions — ${escapeHtml(browserWebsite(selectedWebsite))}</h3>
+    ${renderBrowserSessionTable(visits)}
+  </section>`;
+}
+
+function renderBrowserActivityTable(page) {
+  const items = page?.items || [];
+  const sessions = flattenBrowserSessions(items);
+  const grouped = groupBrowserSummary(sessions);
+  if (!grouped.length) {
+    return `<div class="browser-activity-panel">
+      <p class="device-empty">No browser activity during the selected time range. Try widening the Global Time Filter in the header.</p>
+    </div>`;
+  }
+  const selectedWebsite = state.fleet.browserTimelineFilter;
+  const summaryRows = grouped
+    .map((item) => {
+      const active =
+        selectedWebsite &&
+        browserWebsite(item.website).toLowerCase() === browserWebsite(selectedWebsite).toLowerCase();
+      return `<tr class="browser-summary-row${active ? " browser-summary-row-selected" : ""}" data-browser-summary-key="${escapeHtml(
+        item.website
+      )}" tabindex="0">
+        <td class="py-2 pr-3">${displayValue(item.website)}</td>
+        <td class="py-2 pr-3">${escapeHtml(item.total_time)}</td>
+        <td class="py-2">${escapeHtml(String(item.visits ?? 0))}</td>
+      </tr>`;
+    })
+    .join("");
+  return `<div class="browser-activity-panel">
+    <section class="browser-summary-section">
+      <h3 class="browser-section-heading">Website Summary</h3>
+      <table class="browser-summary-table w-full text-sm">
+        <thead class="text-left text-mist-400 text-xs uppercase tracking-wide">
+          <tr>
+            <th class="py-2 pr-3">Website</th>
+            <th class="py-2 pr-3">Total Time</th>
+            <th class="py-2">Visits</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-ink-600">${summaryRows}</tbody>
+      </table>
+    </section>
+    ${renderBrowserActivityDetail(selectedWebsite, items)}
+  </div>`;
 }
 
 function renderActivityArchitecture() {
@@ -540,37 +1191,27 @@ function renderActivityArchitecture() {
       .join("")}</tbody></table>`;
 }
 
-function renderTimelinePlaceholders() {
-  const events = [
-    { type: "user.logged_in", title: "User Logged In" },
-    { type: "user.logged_out", title: "User Logged Out" },
-    { type: "app.started", title: "Chrome Started" },
-    { type: "app.closed", title: "Chrome Closed" },
-    { type: "app.started", title: "Cursor Started" },
-    { type: "app.closed", title: "Cursor Closed" },
-    { type: "screen.locked", title: "Screen Locked" },
-    { type: "screen.unlocked", title: "Screen Unlocked" },
-    { type: "power.sleep", title: "Sleep" },
-    { type: "power.wake", title: "Wake" },
-    { type: "power.restart", title: "Restart" },
-    { type: "power.shutdown", title: "Shutdown" },
-  ];
-  return `<p class="text-mist-400 mb-3">Structured timeline placeholders for this endpoint. No live events are collected yet.</p>
-    <table class="w-full text-sm"><thead class="text-left text-mist-400 text-xs uppercase tracking-wide"><tr>
-    <th class="py-2 pr-3">Type</th><th class="py-2 pr-3">Title</th><th class="py-2">Status</th>
-    </tr></thead><tbody class="divide-y divide-ink-600">${events
-      .map(
-        (event) =>
-          `<tr><td class="py-2 pr-3 font-mono text-xs">${escapeHtml(event.type)}</td><td class="py-2 pr-3">${escapeHtml(event.title)}</td><td class="py-2">placeholder</td></tr>`
-      )
-      .join("")}</tbody></table>`;
-}
-
 function definitionList(rows) {
   return `<dl class="device-detail-grid">${rows
     .map(([label, value]) => {
       const rendered =
         typeof value === "number" ? formatNumber(value) : displayValue(value);
+      return `<dt>${escapeHtml(label)}</dt><dd>${rendered}</dd>`;
+    })
+    .join("")}</dl>`;
+}
+
+function definitionListHtml(rows) {
+  return `<dl class="device-detail-grid">${rows
+    .map(([label, value]) => {
+      let rendered;
+      if (value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "html")) {
+        rendered = value.html;
+      } else if (typeof value === "number") {
+        rendered = formatNumber(value);
+      } else {
+        rendered = displayValue(value);
+      }
       return `<dt>${escapeHtml(label)}</dt><dd>${rendered}</dd>`;
     })
     .join("")}</dl>`;
@@ -622,7 +1263,9 @@ function renderFleetSoftwareTable(page) {
 }
 
 function renderFleetDetail() {
+  try {
   const f = state.fleet;
+  f.tab = normalizeFleetTab(f.tab);
   const title = document.getElementById("fleet-detail-title");
   const subtitle = document.getElementById("fleet-detail-subtitle");
   const errorNode = document.getElementById("fleet-detail-error");
@@ -632,8 +1275,8 @@ function renderFleetDetail() {
   title.textContent = item?.hostname || item?.machine_name || "Computer";
   subtitle.textContent = f.selectedId || "";
 
-  document.querySelectorAll(".fleet-tab").forEach((button) => {
-    button.classList.toggle("fleet-tab-active", button.dataset.tab === f.tab);
+  document.querySelectorAll(".fleet-nav-item").forEach((button) => {
+    button.classList.toggle("fleet-nav-item-active", button.dataset.tab === f.tab);
   });
 
   if (f.detailError) {
@@ -659,6 +1302,7 @@ function renderFleetDetail() {
 
   if (f.tab === "overview") {
     body.innerHTML = renderEndpointOverview(item);
+    manageHealthAutoRefresh();
     return;
   }
 
@@ -667,33 +1311,7 @@ function renderFleetDetail() {
     return;
   }
 
-  if (f.tab === "alerts" || f.tab === "detections" || f.tab === "response" || f.tab === "threat-timeline") {
-    body.innerHTML = `<p class="text-mist-400 mb-3">Security signals will attach to this computer. Detections and response are not implemented.</p><p>Not implemented yet.</p>`;
-    return;
-  }
-
-  if (f.tab === "network") {
-    body.innerHTML = `<p class="text-mist-400 mb-3">Network data belongs only to this endpoint. Collectors are not implemented.</p>
-      ${definitionList([
-        ["Adapters", "Not collected yet"],
-        ["Active connections", "Not collected yet"],
-        ["Listening ports", "Not collected yet"],
-        ["Public IP", "Not collected yet"],
-      ])}`;
-    return;
-  }
-
-  if (f.tab === "timeline") {
-    body.innerHTML = renderTimelinePlaceholders();
-    return;
-  }
-
-  if (f.tab === "processes" || f.tab === "services") {
-    body.innerHTML = `<p>Not implemented yet</p>`;
-    return;
-  }
-
-  if (f.extraLoading) {
+  if (f.extraLoading && f.extraTab === f.tab) {
     body.innerHTML = `<p class="text-mist-400">Loading…</p>`;
     return;
   }
@@ -715,92 +1333,62 @@ function renderFleetDetail() {
     return;
   }
   if (f.tab === "browser") {
-    body.innerHTML = renderWebsiteUsageTable(f.websiteUsage);
+    body.innerHTML = renderBrowserActivityTable(f.browserActivity);
     return;
   }
   if (f.tab === "software") {
     body.innerHTML = renderFleetSoftwareTable(f.software);
     return;
   }
-  if (f.tab === "health") {
-    const health = f.health;
-    if (!health) {
-      body.innerHTML = `<p class="text-mist-400">No health data.</p>`;
-      return;
-    }
-    body.innerHTML = definitionList([
-      ["Status", presenceLabel(health.status)],
-      ["Heartbeat age (s)", health.heartbeat_age_seconds],
-      ["Last inventory", formatTime(health.last_inventory_at)],
-      ["Last communication", formatTime(health.last_communication_at)],
-      ["CPU usage", health.cpu_usage],
-      ["Memory usage", health.memory_usage],
-      ["Disk usage", health.disk_usage],
-      ["Memory (inventory snapshot)", formatBytes(health.memory_bytes)],
-      ["Disk total (inventory snapshot)", formatBytes(health.disk_total_bytes)],
-      ["Disk free (inventory snapshot)", formatBytes(health.disk_free_bytes)],
-    ]);
-    return;
-  }
-  if (f.tab === "policies") {
-    const policy = f.policy;
-    if (!policy) {
-      body.innerHTML = `<p class="text-mist-400">No policy assigned.</p>`;
-      return;
-    }
-    body.innerHTML = definitionList([
-      ["Policy ID", policy.id],
-      ["Name", policy.name],
-      ["Heartbeat interval (s)", policy.heartbeat_interval_seconds],
-      ["Collect devices", String(policy.collect_devices)],
-      ["Collect users", String(policy.collect_users)],
-      ["Collect software", String(policy.collect_software)],
-      ["Collect processes", String(policy.collect_processes)],
-      ["Collect services", String(policy.collect_services)],
-      ["Collect event logs", String(policy.collect_event_logs)],
-      ["Created at", formatTime(policy.created_at)],
-    ]);
+  } finally {
+    manageSessionDurationTicker();
   }
 }
 
-async function loadFleet() {
+async function loadFleet({ force = false, silent = false } = {}) {
   const f = state.fleet;
+  const queryKey = fleetQueryKey();
+  if (
+    !force &&
+    !f.loading &&
+    queryKey === f.queryKey &&
+    isCacheFresh(f.fetchedAt) &&
+    (state.view === "fleet" || state.view === "dashboard")
+  ) {
+    renderFleetFromCache();
+    return;
+  }
+  if (f.loading && queryKey === f.queryKey) return;
+
+  const gen = ++f.loadGen;
   f.loading = true;
   f.error = null;
-  renderFleetSummary();
-  renderFleetStatus();
-  renderFleetTable();
-  renderFleetPagination();
-  updateFleetSortIndicators();
+  if (!silent) {
+    renderFleetFromCache();
+  }
 
   try {
-    const payload = await fetchJson(
-      platformUrl("/api/v1/fleet", {
-        q: f.q,
-        status: f.status,
-        tag: f.tag,
-        limit: f.limit,
-        offset: f.offset,
-        sort: f.sort,
-      })
-    );
+    const payload = await fetchJson(platformUrl("/api/v1/fleet", fleetQueryParams()));
+    if (gen !== f.loadGen) return;
     f.items = payload.items || [];
     f.total = Number(payload.total || 0);
     f.limit = Number(payload.limit || f.limit);
     f.offset = Number(payload.offset || 0);
     f.summary = payload.summary || f.summary;
     f.error = null;
+    f.queryKey = queryKey;
+    f.fetchedAt = Date.now();
   } catch (error) {
+    if (gen !== f.loadGen) return;
     f.items = [];
     f.total = 0;
     f.error = error.message || "Failed to load fleet.";
   } finally {
+    if (gen !== f.loadGen) return;
     f.loading = false;
-    renderFleetSummary();
-    renderFleetStatus();
-    renderFleetTable();
-    renderFleetPagination();
-    updateFleetSortIndicators();
+    if (state.view === "fleet" || state.view === "dashboard") {
+      renderFleetFromCache();
+    }
   }
 }
 
@@ -814,12 +1402,43 @@ function applicationActivityTimeQuery() {
   };
 }
 
-function onApplicationActivityTimeRangeChange() {
-  const f = state.fleet;
-  f.applicationActivity = null;
-  if (state.view === "fleet-detail" && f.tab === "applications" && f.selectedId) {
-    loadFleetTabData();
+function globalTimeFilterLabel() {
+  const api = window.RiskLensGlobalTime;
+  if (!api || typeof api.getGlobalTimeStore !== "function") return "the selected time range";
+  const range = api.getGlobalTimeStore().getState();
+  const picker = window.RiskLensGlobalTimePicker;
+  if (picker && typeof picker.displayPresetLabel === "function") {
+    if (range.preset === "custom") return "Custom Range";
+    return picker.displayPresetLabel(range.preset);
   }
+  return range.preset || "the selected time range";
+}
+
+function activityTimeRangeNotice() {
+  return `<p class="text-xs text-mist-400 mb-3">Filtered by Global Time: <strong>${escapeHtml(
+    globalTimeFilterLabel()
+  )}</strong>. Use the time picker in the header to widen the range if activity looks missing.</p>`;
+}
+
+function onApplicationActivityTimeRangeChange() {
+  clearTimeout(applicationActivityTimeDebounce);
+  applicationActivityTimeDebounce = setTimeout(() => {
+    const f = state.fleet;
+    f.applicationActivity = null;
+    f.browserActivity = null;
+    f.browserTimelineFilter = null;
+    state.productivity.reportQueryKey = "";
+    if (
+      state.view === "fleet-detail" &&
+      f.selectedId &&
+      (f.tab === "applications" || f.tab === "browser")
+    ) {
+      loadFleetTabData();
+    }
+    if (state.view === "productivity" && state.productivity.agentId) {
+      loadProductivityReport({ force: true });
+    }
+  }, 250);
 }
 
 function bindApplicationActivityTimeFilter() {
@@ -831,22 +1450,21 @@ function bindApplicationActivityTimeFilter() {
 async function loadFleetTabData() {
   const f = state.fleet;
   if (!f.selectedId) return;
+  f.tab = normalizeFleetTab(f.tab);
   const tab = f.tab;
-  if (
-    tab === "overview" ||
-    tab === "activity" ||
-    tab === "network" ||
-    tab === "timeline" ||
-    tab === "processes" ||
-    tab === "services" ||
-    tab === "alerts" ||
-    tab === "detections" ||
-    tab === "response" ||
-    tab === "threat-timeline"
-  ) {
+  if (tab === "activity") {
     renderFleetDetail();
     return;
   }
+  if (tab === "overview") {
+    renderFleetDetail();
+    await refreshOverviewHealth({ silent: Boolean(f.health) });
+    return;
+  }
+  const requestAgentId = f.selectedId;
+  const requestTab = tab;
+  const gen = ++f.extraLoadGen;
+  f.extraTab = tab;
   f.extraLoading = true;
   f.extraError = null;
   renderFleetDetail();
@@ -855,11 +1473,11 @@ async function loadFleetTabData() {
       f.users = await fetchJson(
         platformUrl(`/api/v1/fleet/${encodeURIComponent(f.selectedId)}/users`, { limit: 200 })
       );
-    } else if (tab === "software") {
+    } else if (tab === "software" && !f.software) {
       f.software = await fetchJson(
         platformUrl(`/api/v1/fleet/${encodeURIComponent(f.selectedId)}/software`, { limit: 200 })
       );
-    } else if (tab === "sessions" && !f.sessions) {
+    } else if (tab === "sessions") {
       f.sessions = await fetchJson(
         platformUrl(`/api/v1/fleet/${encodeURIComponent(f.selectedId)}/sessions`, { limit: 200 })
       );
@@ -871,29 +1489,44 @@ async function loadFleetTabData() {
         })
       );
     } else if (tab === "browser") {
-      f.websiteUsage = await fetchJson(
-        platformUrl(`/api/v1/fleet/${encodeURIComponent(f.selectedId)}/website-usage`)
-      );
-    } else if (tab === "health" && !f.health) {
-      f.health = await fetchJson(
-        platformUrl(`/api/v1/fleet/${encodeURIComponent(f.selectedId)}/health`)
-      );
-    } else if (tab === "policies" && !f.policy) {
-      f.policy = await fetchJson(
-        platformUrl(`/api/v1/fleet/${encodeURIComponent(f.selectedId)}/policy`)
+      f.browserActivity = await fetchJson(
+        platformUrl(`/api/v1/fleet/${encodeURIComponent(f.selectedId)}/browser-activity`, {
+          limit: 200,
+          sort: f.browserSort || "-duration_seconds",
+          ...applicationActivityTimeQuery(),
+        })
       );
     }
+    if (gen !== f.extraLoadGen || f.selectedId !== requestAgentId || f.tab !== requestTab) return;
     f.extraError = null;
   } catch (error) {
+    if (gen !== f.extraLoadGen || f.selectedId !== requestAgentId || f.tab !== requestTab) return;
     f.extraError = error.message || "Failed to load tab.";
   } finally {
+    if (gen !== f.extraLoadGen) return;
     f.extraLoading = false;
+    f.extraTab = null;
+    if (f.selectedId !== requestAgentId || f.tab !== requestTab) return;
     renderFleetDetail();
   }
 }
 
 async function loadFleetDetail(agentId) {
   const f = state.fleet;
+  const requestAgentId = agentId;
+  if (
+    f.selectedId === agentId &&
+    f.detail &&
+    !f.detailLoading &&
+    !f.detailError &&
+    fleetAgentIdFromHash() === requestAgentId
+  ) {
+    if (state.view !== "fleet-detail") {
+      setView("fleet-detail", { force: false });
+    }
+    loadFleetTabData();
+    return;
+  }
   const switched = f.selectedId !== agentId;
   f.selectedId = agentId;
   if (switched) {
@@ -902,23 +1535,30 @@ async function loadFleetDetail(agentId) {
     f.software = null;
     f.sessions = null;
     f.applicationActivity = null;
-    f.websiteUsage = null;
+    f.browserActivity = null;
+    f.browserTimelineFilter = null;
     f.health = null;
-    f.policy = null;
+    f.healthError = null;
+    f.healthLoading = false;
   }
   f.detailError = null;
   f.detailLoading = true;
   f.extraError = null;
-  setView("fleet-detail");
+  if (fleetAgentIdFromHash() === requestAgentId) {
+    setView("fleet-detail", { force: false });
+  }
   renderFleetDetail();
 
   try {
     f.detail = await fetchJson(platformUrl(`/api/v1/fleet/${encodeURIComponent(agentId)}`));
+    if (fleetAgentIdFromHash() !== requestAgentId) return;
     f.detailError = null;
   } catch (error) {
+    if (fleetAgentIdFromHash() !== requestAgentId) return;
     f.detail = null;
     f.detailError = error.message || "Failed to load agent.";
   } finally {
+    if (fleetAgentIdFromHash() !== requestAgentId) return;
     f.detailLoading = false;
     renderFleetDetail();
     if (!f.detailError) loadFleetTabData();
@@ -935,7 +1575,7 @@ function openFleetAgent(agentId) {
 }
 
 function backToFleet() {
-  if (window.location.hash === "#/fleet") {
+  if (hashPath() === "#/fleet") {
     setView("fleet");
     return;
   }
@@ -943,36 +1583,19 @@ function backToFleet() {
 }
 
 function applyFleetHash() {
-  const agentId = fleetAgentIdFromHash();
-  if (agentId) {
-    loadFleetDetail(agentId);
-    return true;
-  }
-  if (window.location.hash === "#/fleet" || !window.location.hash) {
-    setView("fleet");
-    return true;
-  }
-  return false;
+  return applyAppHash();
 }
 
 navLinks.forEach((link) => {
   link.addEventListener("click", () => {
-    const view = link.dataset.view;
-    if (view === "fleet") {
-      if (window.location.hash !== "#/fleet") {
-        window.location.hash = "#/fleet";
-      }
-      setView("fleet");
-      return;
-    }
-    setView(view);
+    navigateToView(link.dataset.view);
   });
 });
 
 document.querySelectorAll("[data-open-view]").forEach((button) => {
   button.addEventListener("click", () => {
     const view = button.dataset.openView;
-    if (view) setView(view);
+    if (view) navigateToView(view);
   });
 });
 
@@ -1003,7 +1626,7 @@ document.getElementById("fleet-clear-filters").addEventListener("click", () => {
 });
 
 document.getElementById("fleet-refresh").addEventListener("click", () => {
-  loadFleet();
+  loadFleet({ force: true });
 });
 
 document.getElementById("fleet-prev").addEventListener("click", () => {
@@ -1044,15 +1667,35 @@ document.getElementById("fleet-body").addEventListener("keydown", (event) => {
 
 document.getElementById("fleet-detail-back").addEventListener("click", backToFleet);
 
-document.getElementById("fleet-detail-tabs").addEventListener("click", (event) => {
-  const button = event.target.closest(".fleet-tab");
+document.getElementById("fleet-detail-nav").addEventListener("click", (event) => {
+  const button = event.target.closest(".fleet-nav-item");
   if (!button) return;
   state.fleet.tab = button.dataset.tab;
   loadFleetTabData();
 });
 
+document.getElementById("fleet-detail-body").addEventListener("click", (event) => {
+  const row = event.target.closest("[data-browser-summary-key]");
+  if (!row || state.fleet.tab !== "browser") return;
+  const key = (row.getAttribute("data-browser-summary-key") || "").trim();
+  if (!key) return;
+  state.fleet.browserTimelineFilter = key;
+  renderFleetDetail();
+});
+
+document.getElementById("fleet-detail-body").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const row = event.target.closest("[data-browser-summary-key]");
+  if (!row || state.fleet.tab !== "browser") return;
+  event.preventDefault();
+  const key = (row.getAttribute("data-browser-summary-key") || "").trim();
+  if (!key) return;
+  state.fleet.browserTimelineFilter = key;
+  renderFleetDetail();
+});
+
 window.addEventListener("hashchange", () => {
-  applyFleetHash();
+  applyAppHash();
 });
 
 // ---------------------------------------------------------------------------
@@ -1141,15 +1784,8 @@ function renderUsersPagination() {
   next.disabled = u.loading || u.offset + u.limit >= u.total;
 }
 
-async function loadUsers() {
+async function loadUsers({ force = false, silent = false } = {}) {
   const u = state.users;
-  u.loading = true;
-  u.error = null;
-  renderUsersStatus();
-  renderUsersTable();
-  renderUsersPagination();
-  updateUserSortIndicators();
-
   const params = {
     username: u.username,
     account_type: u.account_type,
@@ -1160,24 +1796,50 @@ async function loadUsers() {
   if (u.enabled === "true" || u.enabled === "false") {
     params.enabled = u.enabled;
   }
+  const queryKey = stableQueryKey(params);
+  if (!force && !u.loading && queryKey === u.queryKey && isCacheFresh(u.fetchedAt) && state.view === "users") {
+    renderUsersStatus();
+    renderUsersTable();
+    renderUsersPagination();
+    updateUserSortIndicators();
+    return;
+  }
+  if (u.loading && queryKey === u.queryKey) return;
+
+  const gen = ++u.loadGen;
+  u.loading = true;
+  u.error = null;
+  if (!silent) {
+    renderUsersStatus();
+    renderUsersTable();
+    renderUsersPagination();
+    updateUserSortIndicators();
+  }
 
   try {
     const payload = await fetchJson(platformUrl("/api/v1/users", params));
+    if (gen !== u.loadGen) return;
     u.items = payload.items || [];
     u.total = Number(payload.total || 0);
     u.limit = Number(payload.limit || u.limit);
     u.offset = Number(payload.offset || 0);
     u.error = null;
+    u.queryKey = queryKey;
+    u.fetchedAt = Date.now();
   } catch (error) {
+    if (gen !== u.loadGen) return;
     u.items = [];
     u.total = 0;
     u.error = error.message || "Failed to load users.";
   } finally {
+    if (gen !== u.loadGen) return;
     u.loading = false;
-    renderUsersStatus();
-    renderUsersTable();
-    renderUsersPagination();
-    updateUserSortIndicators();
+    if (state.view === "users") {
+      renderUsersStatus();
+      renderUsersTable();
+      renderUsersPagination();
+      updateUserSortIndicators();
+    }
   }
 }
 
@@ -1203,7 +1865,7 @@ document.getElementById("users-clear-filters").addEventListener("click", () => {
   loadUsers();
 });
 
-document.getElementById("users-refresh").addEventListener("click", () => loadUsers());
+document.getElementById("users-refresh").addEventListener("click", () => loadUsers({ force: true }));
 document.getElementById("users-prev").addEventListener("click", () => {
   const u = state.users;
   u.offset = Math.max(0, u.offset - u.limit);
@@ -1310,15 +1972,8 @@ function renderSoftwarePagination() {
   next.disabled = s.loading || s.offset + s.limit >= s.total;
 }
 
-async function loadSoftware() {
+async function loadSoftware({ force = false, silent = false } = {}) {
   const s = state.software;
-  s.loading = true;
-  s.error = null;
-  renderSoftwareStatus();
-  renderSoftwareTable();
-  renderSoftwarePagination();
-  updateSoftwareSortIndicators();
-
   const params = {
     application_name: s.application_name,
     publisher: s.publisher,
@@ -1328,24 +1983,50 @@ async function loadSoftware() {
     offset: s.offset,
     sort: s.sort,
   };
+  const queryKey = stableQueryKey(params);
+  if (!force && !s.loading && queryKey === s.queryKey && isCacheFresh(s.fetchedAt) && state.view === "software") {
+    renderSoftwareStatus();
+    renderSoftwareTable();
+    renderSoftwarePagination();
+    updateSoftwareSortIndicators();
+    return;
+  }
+  if (s.loading && queryKey === s.queryKey) return;
+
+  const gen = ++s.loadGen;
+  s.loading = true;
+  s.error = null;
+  if (!silent) {
+    renderSoftwareStatus();
+    renderSoftwareTable();
+    renderSoftwarePagination();
+    updateSoftwareSortIndicators();
+  }
 
   try {
     const payload = await fetchJson(platformUrl("/api/v1/software", params));
+    if (gen !== s.loadGen) return;
     s.items = payload.items || [];
     s.total = Number(payload.total || 0);
     s.limit = Number(payload.limit || s.limit);
     s.offset = Number(payload.offset || 0);
     s.error = null;
+    s.queryKey = queryKey;
+    s.fetchedAt = Date.now();
   } catch (error) {
+    if (gen !== s.loadGen) return;
     s.items = [];
     s.total = 0;
     s.error = error.message || "Failed to load installed software.";
   } finally {
+    if (gen !== s.loadGen) return;
     s.loading = false;
-    renderSoftwareStatus();
-    renderSoftwareTable();
-    renderSoftwarePagination();
-    updateSoftwareSortIndicators();
+    if (state.view === "software") {
+      renderSoftwareStatus();
+      renderSoftwareTable();
+      renderSoftwarePagination();
+      updateSoftwareSortIndicators();
+    }
   }
 }
 
@@ -1374,7 +2055,7 @@ document.getElementById("software-clear-filters").addEventListener("click", () =
   loadSoftware();
 });
 
-document.getElementById("software-refresh").addEventListener("click", () => loadSoftware());
+document.getElementById("software-refresh").addEventListener("click", () => loadSoftware({ force: true }));
 document.getElementById("software-prev").addEventListener("click", () => {
   const s = state.software;
   s.offset = Math.max(0, s.offset - s.limit);
@@ -1395,5 +2076,1004 @@ document.querySelectorAll(".software-sort").forEach((button) => {
   });
 });
 
-applyFleetHash();
+// ---------------------------------------------------------------------------
+// Productivity Report (Reports) — uses Global Time Filter + Application Activity
+// ---------------------------------------------------------------------------
+
+function renderProductivityAgentOptions() {
+  const select = document.getElementById("productivity-agent");
+  if (!select) return;
+  const p = state.productivity;
+  const options = ['<option value="">Select a computer…</option>']
+    .concat(
+      (p.agents || []).map((agent) => {
+        const id = agent.agent_id;
+        const label = agent.hostname || agent.machine_name || id;
+        const user = agent.current_user ? ` · ${agent.current_user}` : "";
+        const selected = id === p.agentId ? " selected" : "";
+        return `<option value="${escapeHtml(id)}"${selected}>${escapeHtml(label)}${escapeHtml(user)}</option>`;
+      })
+    )
+    .join("");
+  select.innerHTML = options;
+}
+
+function renderProductivityStatus() {
+  const node = document.getElementById("productivity-status");
+  if (!node) return;
+  const p = state.productivity;
+  if (p.agentsLoading) {
+    node.textContent = "Loading computers…";
+    return;
+  }
+  if (p.loading) {
+    node.textContent = "Generating productivity report…";
+    return;
+  }
+  if (p.error) {
+    node.textContent = p.error;
+    return;
+  }
+  if (!p.agentId) {
+    node.textContent = "Choose a computer to generate the report.";
+    return;
+  }
+  const range = applicationActivityTimeQuery();
+  const from = range.started_at_from ? formatTime(range.started_at_from) : "—";
+  const to = range.started_at_to ? formatTime(range.started_at_to) : "—";
+  node.textContent = `Report period ${from} → ${to}`;
+}
+
+function ensureProductivityChartStyles() {
+  if (document.getElementById("productivity-chart-styles")) return;
+  const style = document.createElement("style");
+  style.id = "productivity-chart-styles";
+  style.textContent = `
+    .productivity-bar-row{display:grid;grid-template-columns:minmax(5rem,8rem) 1fr auto;gap:.65rem;align-items:center;margin-bottom:.55rem}
+    .productivity-bar-label{font-size:.8rem;color:#e8eef4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .productivity-bar-track{height:.75rem;border-radius:999px;background:#0c1117;border:1px solid #243140;overflow:hidden}
+    .productivity-bar-fill{height:100%;border-radius:inherit;background:#3ddc97;min-width:2px}
+    .productivity-bar-value{font-size:.75rem;font-family:"IBM Plex Mono",ui-monospace,monospace;color:#9aa8b7;white-space:nowrap}
+    .productivity-stack-track{display:flex;height:1rem;border-radius:999px;overflow:hidden;border:1px solid #243140;background:#0c1117}
+    .productivity-stack-active{background:#3ddc97;height:100%}
+    .productivity-stack-idle{background:#314456;height:100%}
+    .productivity-stack-legend{display:flex;flex-wrap:wrap;gap:.85rem 1.25rem;margin-top:.75rem;font-size:.8rem;color:#9aa8b7}
+    .productivity-dot{display:inline-block;width:.55rem;height:.55rem;border-radius:999px;margin-right:.4rem;vertical-align:middle}
+    .productivity-dot-active{background:#3ddc97}
+    .productivity-dot-idle{background:#314456;border:1px solid #4a5d70}
+    .productivity-metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:.85rem}
+    .productivity-donut-wrap{display:grid;grid-template-columns:auto 1fr;gap:1rem;align-items:center}
+    .productivity-donut-chart{position:relative;width:8.5rem;height:8.5rem}
+    .productivity-donut-svg{width:100%;height:100%;display:block}
+    .productivity-donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+    .productivity-donut-center-label{font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;color:#6f7f90}
+    .productivity-donut-center-value{margin-top:.15rem;font-size:1.15rem;font-weight:600;font-family:"IBM Plex Mono",ui-monospace,monospace;color:#e8eef4}
+    .productivity-legend{display:flex;flex-direction:column;gap:.4rem;min-width:0}
+    .productivity-legend-row{display:grid;grid-template-columns:auto 1fr auto;gap:.45rem;align-items:center;font-size:.75rem}
+    .productivity-legend-swatch{width:.55rem;height:.55rem;border-radius:999px;display:inline-block}
+    .productivity-legend-label{color:#e8eef4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .productivity-legend-value{color:#9aa8b7;font-family:"IBM Plex Mono",ui-monospace,monospace;white-space:nowrap}
+    .productivity-cols{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.75rem;align-items:end;min-height:10rem}
+    .productivity-col{display:flex;flex-direction:column;align-items:center;gap:.35rem;min-width:0}
+    .productivity-col-track{width:100%;max-width:2.4rem;height:7rem;border-radius:.4rem .4rem .2rem .2rem;background:#0c1117;border:1px solid #243140;display:flex;align-items:flex-end;overflow:hidden}
+    .productivity-col-fill{width:100%;min-height:4px;border-radius:.25rem .25rem 0 0}
+    .productivity-col-value{font-size:.7rem;font-family:"IBM Plex Mono",ui-monospace,monospace;color:#9aa8b7}
+    .productivity-col-label{width:100%;text-align:center;font-size:.68rem;color:#e8eef4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .productivity-kpi-meta{margin-top:.45rem;font-size:.7rem;color:#6f7f90}
+    @media (max-width:900px){
+      .productivity-donut-wrap{grid-template-columns:1fr;justify-items:center}
+      .productivity-cols{grid-template-columns:repeat(3,minmax(0,1fr))}
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function productivityChartColors() {
+  return ["#3ddc97", "#4aa8d8", "#e6b35a", "#7aa2b8", "#d67a5a", "#5ec4a8", "#8b9bb4", "#c4a35a"];
+}
+
+function productivityPercent(part, whole) {
+  const total = Number(whole) || 0;
+  if (total <= 0) return 0;
+  return Math.round((Math.max(0, Number(part) || 0) / total) * 1000) / 10;
+}
+
+function productivityDonutChart(segments, centerLabel, centerValue) {
+  const colors = productivityChartColors();
+  const total = segments.reduce((sum, item) => sum + Math.max(0, Number(item.value) || 0), 0);
+  if (!total) {
+    return `<div class="productivity-donut-empty text-sm text-mist-400">No data for this period.</div>`;
+  }
+  const radius = 42;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+  const rings = segments
+    .filter((item) => Number(item.value) > 0)
+    .slice(0, 8)
+    .map((item, index) => {
+      const value = Math.max(0, Number(item.value) || 0);
+      const length = (value / total) * circumference;
+      const dasharray = `${length} ${circumference - length}`;
+      const dashoffset = -offset;
+      offset += length;
+      return `<circle class="productivity-donut-segment" cx="54" cy="54" r="${radius}" fill="transparent"
+        stroke="${colors[index % colors.length]}" stroke-width="12"
+        stroke-dasharray="${dasharray}" stroke-dashoffset="${dashoffset}"
+        transform="rotate(-90 54 54)">
+        <title>${escapeHtml(item.label)}: ${escapeHtml(item.display || String(value))}</title>
+      </circle>`;
+    })
+    .join("");
+  const legend = segments
+    .filter((item) => Number(item.value) > 0)
+    .slice(0, 8)
+    .map((item, index) => {
+      const pct = productivityPercent(item.value, total);
+      return `<div class="productivity-legend-row">
+        <span class="productivity-legend-swatch" style="background:${colors[index % colors.length]}"></span>
+        <span class="productivity-legend-label" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+        <span class="productivity-legend-value">${escapeHtml(item.display || "")} · ${pct}%</span>
+      </div>`;
+    })
+    .join("");
+  return `<div class="productivity-donut-wrap" style="display:grid;grid-template-columns:auto 1fr;gap:1rem;align-items:center">
+    <div class="productivity-donut-chart" style="position:relative;width:8.5rem;height:8.5rem">
+      <svg viewBox="0 0 108 108" class="productivity-donut-svg" style="width:100%;height:100%;display:block" aria-hidden="true">
+        <circle cx="54" cy="54" r="${radius}" fill="transparent" stroke="#0c1117" stroke-width="12"></circle>
+        ${rings}
+      </svg>
+      <div class="productivity-donut-center" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none">
+        <div class="productivity-donut-center-label">${escapeHtml(centerLabel || "")}</div>
+        <div class="productivity-donut-center-value">${escapeHtml(centerValue || "")}</div>
+      </div>
+    </div>
+    <div class="productivity-legend">${legend}</div>
+  </div>`;
+}
+
+function productivityStackedTimeBar(summary) {
+  const active = Math.max(0, Number(summary.active_time_seconds) || 0);
+  const idle = Math.max(0, Number(summary.idle_time_seconds) || 0);
+  const working = Math.max(active + idle, Number(summary.working_time_seconds) || 0);
+  if (!working) {
+    return `<p class="text-sm text-mist-400">No time composition for this period.</p>`;
+  }
+  const activePct = productivityPercent(active, working);
+  const idlePct = Math.max(0, Math.round((1000 - activePct * 10)) / 10);
+  return `<div class="productivity-stack">
+    <div class="productivity-stack-track" style="display:flex;height:1rem;border-radius:999px;overflow:hidden;border:1px solid #243140;background:#0c1117" title="Active ${activePct}% · Idle ${idlePct}%">
+      <div class="productivity-stack-active" style="width:${activePct}%;height:100%;background:#3ddc97"></div>
+      <div class="productivity-stack-idle" style="width:${idlePct}%;height:100%;background:#314456"></div>
+    </div>
+    <div class="productivity-stack-legend">
+      <span><i class="productivity-dot productivity-dot-active"></i>Active ${escapeHtml(
+        summary.active_time || "0s"
+      )} (${activePct}%)</span>
+      <span><i class="productivity-dot productivity-dot-idle"></i>Idle ${escapeHtml(
+        summary.idle_time || "0s"
+      )} (${idlePct}%)</span>
+    </div>
+  </div>`;
+}
+
+function productivityBarRows(items, labelKey, valueKey) {
+  const colors = productivityChartColors();
+  const max = Math.max(0, ...items.map((item) => Number(item[valueKey] || 0)));
+  if (!items.length) {
+    return `<p class="text-sm text-mist-400">No data for this period.</p>`;
+  }
+  return items
+    .slice(0, 8)
+    .map((item, index) => {
+      const value = Number(item[valueKey] || 0);
+      const width = max > 0 ? Math.max(6, Math.round((value / max) * 100)) : 0;
+      return `<div class="productivity-bar-row" style="display:grid;grid-template-columns:minmax(5rem,8rem) 1fr auto;gap:.65rem;align-items:center;margin-bottom:.55rem">
+        <div class="productivity-bar-label" title="${escapeHtml(item[labelKey] || "")}">${escapeHtml(
+        item[labelKey] || "—"
+      )}</div>
+        <div class="productivity-bar-track" style="height:.75rem;border-radius:999px;background:#0c1117;border:1px solid #243140;overflow:hidden">
+          <div class="productivity-bar-fill" style="width:${width}%;height:100%;background:${
+        colors[index % colors.length]
+      }"></div>
+        </div>
+        <div class="productivity-bar-value">${escapeHtml(item.total_time || formatBrowserTimeSpent(value))}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+function productivityLaunchBars(items) {
+  const colors = productivityChartColors();
+  const rows = (items || []).slice(0, 6);
+  const max = Math.max(0, ...rows.map((item) => Number(item.launch_count || 0)));
+  if (!rows.length || max <= 0) {
+    return `<p class="text-sm text-mist-400">No launch data for this period.</p>`;
+  }
+  return rows
+    .map((item, index) => {
+      const value = Number(item.launch_count || 0);
+      const height = Math.max(8, Math.round((value / max) * 100));
+      return `<div class="productivity-col" style="display:flex;flex-direction:column;align-items:center;gap:.35rem;min-width:0">
+        <div class="productivity-col-value">${escapeHtml(String(value))}</div>
+        <div class="productivity-col-track" style="width:100%;max-width:2.4rem;height:7rem;border-radius:.4rem .4rem .2rem .2rem;background:#0c1117;border:1px solid #243140;display:flex;align-items:flex-end;overflow:hidden">
+          <div class="productivity-col-fill" style="width:100%;height:${height}%;min-height:4px;background:${
+        colors[index % colors.length]
+      }"></div>
+        </div>
+        <div class="productivity-col-label" title="${escapeHtml(item.application || "")}">${escapeHtml(
+        item.application || "—"
+      )}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+function renderProductivityReport() {
+  ensureProductivityChartStyles();
+  const root = document.getElementById("productivity-report");
+  if (!root) return;
+  const p = state.productivity;
+  if (p.loading) {
+    root.innerHTML = `<div class="panel text-sm text-mist-400 py-6 text-center">Loading…</div>`;
+    return;
+  }
+  if (p.error) {
+    root.innerHTML = `<div class="panel device-error py-6 text-center">${escapeHtml(p.error)}</div>`;
+    return;
+  }
+  if (!p.report) {
+    root.innerHTML = `<div class="panel text-sm text-mist-400 py-6 text-center">Select a computer and generate a report for the current Global Time Filter range.</div>`;
+    return;
+  }
+  const report = p.report;
+  if (report.empty) {
+    root.innerHTML = `<div class="panel text-sm text-mist-400 py-6 text-center">No productivity data available for the selected period.</div>`;
+    return;
+  }
+
+  const employee = report.employee || {};
+  const summary = report.summary || {};
+  const activity = report.activity || {};
+  const applications = report.applications || [];
+  const websites = report.websites || [];
+  const periodStart = employee.report_period_start ? formatTime(employee.report_period_start) : "—";
+  const periodEnd = employee.report_period_end ? formatTime(employee.report_period_end) : "—";
+  const activeRatio = productivityPercent(summary.active_time_seconds, summary.working_time_seconds);
+
+  const appRows = applications
+    .map(
+      (row) => `<tr>
+        <td class="py-2 pr-3">${escapeHtml(row.application)}</td>
+        <td class="py-2 pr-3 whitespace-nowrap">${escapeHtml(row.total_time)}</td>
+        <td class="py-2 pr-3">${escapeHtml(String(row.percentage))}%</td>
+        <td class="py-2">${escapeHtml(String(row.launch_count))}</td>
+      </tr>`
+    )
+    .join("");
+  const websiteRows = websites
+    .map(
+      (row) => `<tr>
+        <td class="py-2 pr-3">${escapeHtml(row.website)}</td>
+        <td class="py-2 pr-3 whitespace-nowrap">${escapeHtml(row.total_time)}</td>
+        <td class="py-2">${escapeHtml(String(row.visits))}</td>
+      </tr>`
+    )
+    .join("");
+
+  const appSegments = applications.slice(0, 6).map((row) => ({
+    label: row.application,
+    value: row.duration_seconds,
+    display: row.total_time,
+  }));
+  const websiteSegments = websites.slice(0, 6).map((row) => ({
+    label: row.website,
+    value: row.duration_seconds,
+    display: row.total_time,
+  }));
+
+  root.innerHTML = `
+    <section class="panel">
+      <div class="panel-header"><h2>Employee Information</h2></div>
+      <dl class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
+        <div><dt class="text-[11px] uppercase tracking-wide text-mist-400">Computer</dt><dd class="mt-1">${escapeHtml(
+          employee.computer || "—"
+        )}</dd></div>
+        <div><dt class="text-[11px] uppercase tracking-wide text-mist-400">User</dt><dd class="mt-1">${escapeHtml(
+          employee.user || "—"
+        )}</dd></div>
+        <div><dt class="text-[11px] uppercase tracking-wide text-mist-400">Department</dt><dd class="mt-1">${escapeHtml(
+          employee.department || "—"
+        )}</dd></div>
+        <div><dt class="text-[11px] uppercase tracking-wide text-mist-400">Report Period</dt><dd class="mt-1 text-xs font-mono">${escapeHtml(
+          periodStart
+        )} → ${escapeHtml(periodEnd)}</dd></div>
+      </dl>
+    </section>
+
+    <section class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+      <article class="stat-card productivity-kpi">
+        <div class="stat-label">Working Time</div>
+        <div class="stat-value text-lg">${escapeHtml(summary.working_time || "0s")}</div>
+        <div class="productivity-kpi-meta">First → last activity</div>
+      </article>
+      <article class="stat-card productivity-kpi">
+        <div class="stat-label">Active Time</div>
+        <div class="stat-value text-lg">${escapeHtml(summary.active_time || "0s")}</div>
+        <div class="productivity-kpi-meta">${activeRatio}% of working time</div>
+      </article>
+      <article class="stat-card productivity-kpi">
+        <div class="stat-label">Idle Time</div>
+        <div class="stat-value text-lg">${escapeHtml(summary.idle_time || "0s")}</div>
+        <div class="productivity-kpi-meta">Working − active</div>
+      </article>
+      <article class="stat-card productivity-kpi">
+        <div class="stat-label">Applications Used</div>
+        <div class="stat-value text-lg">${escapeHtml(String(summary.applications_used ?? 0))}</div>
+        <div class="productivity-kpi-meta">Unique apps</div>
+      </article>
+      <article class="stat-card productivity-kpi">
+        <div class="stat-label">Websites Visited</div>
+        <div class="stat-value text-lg">${escapeHtml(String(summary.websites_visited ?? 0))}</div>
+        <div class="productivity-kpi-meta">Unique domains</div>
+      </article>
+      <article class="stat-card productivity-kpi">
+        <div class="stat-label">Avg Session Length</div>
+        <div class="stat-value text-lg">${escapeHtml(summary.average_session_length || "0s")}</div>
+        <div class="productivity-kpi-meta">Per activity segment</div>
+      </article>
+    </section>
+
+    <section class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <article class="panel">
+        <div class="panel-header"><h2>Time Composition</h2><span class="text-xs text-mist-400">Active vs idle</span></div>
+        ${productivityStackedTimeBar(summary)}
+        <div class="productivity-metric-grid mt-4">
+          <div>
+            <div class="text-[11px] uppercase tracking-wide text-mist-400">Longest focus</div>
+            <div class="mt-1 text-sm">${escapeHtml(activity.longest_continuous_working_session || "0s")}</div>
+          </div>
+          <div>
+            <div class="text-[11px] uppercase tracking-wide text-mist-400">Longest idle</div>
+            <div class="mt-1 text-sm">${escapeHtml(activity.longest_idle_period || "0s")}</div>
+          </div>
+        </div>
+      </article>
+      <article class="panel">
+        <div class="panel-header"><h2>Application Share</h2><span class="text-xs text-mist-400">By active time</span></div>
+        ${productivityDonutChart(appSegments, "Apps", String(summary.applications_used ?? 0))}
+      </article>
+      <article class="panel">
+        <div class="panel-header"><h2>Website Share</h2><span class="text-xs text-mist-400">By browse time</span></div>
+        ${productivityDonutChart(websiteSegments, "Sites", String(summary.websites_visited ?? 0))}
+      </article>
+    </section>
+
+    <section class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <article class="panel">
+        <div class="panel-header"><h2>Most Used Applications</h2></div>
+        ${productivityBarRows(applications, "application", "duration_seconds")}
+      </article>
+      <article class="panel">
+        <div class="panel-header"><h2>Most Used Websites</h2></div>
+        ${productivityBarRows(websites, "website", "duration_seconds")}
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header"><h2>Application Launches</h2><span class="text-xs text-mist-400">Top apps by launch count</span></div>
+      <div class="productivity-cols" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.75rem;align-items:end;min-height:10rem">${productivityLaunchBars(applications)}</div>
+    </section>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <section class="panel overflow-x-auto">
+        <div class="panel-header"><h2>Application Usage</h2></div>
+        <table class="w-full text-sm">
+          <thead class="text-left text-mist-400 text-xs uppercase tracking-wide">
+            <tr>
+              <th class="py-2 pr-3">Application</th>
+              <th class="py-2 pr-3">Total Time</th>
+              <th class="py-2 pr-3">Percentage</th>
+              <th class="py-2">Launch Count</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-ink-600">${
+            appRows ||
+            `<tr><td colspan="4" class="py-6 text-center text-mist-400">No application usage for this period.</td></tr>`
+          }</tbody>
+        </table>
+      </section>
+      <section class="panel overflow-x-auto">
+        <div class="panel-header"><h2>Website Usage</h2></div>
+        <table class="w-full text-sm">
+          <thead class="text-left text-mist-400 text-xs uppercase tracking-wide">
+            <tr>
+              <th class="py-2 pr-3">Website</th>
+              <th class="py-2 pr-3">Total Time</th>
+              <th class="py-2">Visits</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-ink-600">${
+            websiteRows ||
+            `<tr><td colspan="3" class="py-6 text-center text-mist-400">No website usage for this period.</td></tr>`
+          }</tbody>
+        </table>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="panel-header"><h2>Activity Summary</h2></div>
+      <dl class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
+        <div><dt class="text-[11px] uppercase tracking-wide text-mist-400">First Activity</dt><dd class="mt-1 font-mono text-xs">${escapeHtml(
+          formatTime(activity.first_activity)
+        )}</dd></div>
+        <div><dt class="text-[11px] uppercase tracking-wide text-mist-400">Last Activity</dt><dd class="mt-1 font-mono text-xs">${escapeHtml(
+          formatTime(activity.last_activity)
+        )}</dd></div>
+        <div><dt class="text-[11px] uppercase tracking-wide text-mist-400">Longest Continuous Working Session</dt><dd class="mt-1">${escapeHtml(
+          activity.longest_continuous_working_session || "0s"
+        )}</dd></div>
+        <div><dt class="text-[11px] uppercase tracking-wide text-mist-400">Longest Idle Period</dt><dd class="mt-1">${escapeHtml(
+          activity.longest_idle_period || "0s"
+        )}</dd></div>
+        <div><dt class="text-[11px] uppercase tracking-wide text-mist-400">Most Used Application</dt><dd class="mt-1">${escapeHtml(
+          activity.most_used_application || "—"
+        )}</dd></div>
+        <div><dt class="text-[11px] uppercase tracking-wide text-mist-400">Most Used Website</dt><dd class="mt-1">${escapeHtml(
+          activity.most_used_website || "—"
+        )}</dd></div>
+      </dl>
+    </section>`;
+}
+
+async function loadProductivityAgents({ force = false } = {}) {
+  const p = state.productivity;
+  if (!force && isCacheFresh(p.agentsFetchedAt) && p.agents.length) {
+    renderProductivityAgentOptions();
+    renderProductivityStatus();
+    return;
+  }
+  if (!force && isCacheFresh(state.fleet.fetchedAt) && state.fleet.items.length) {
+    p.agents = state.fleet.items;
+    if (!p.agentId && p.agents.length === 1) {
+      p.agentId = p.agents[0].agent_id;
+    }
+    p.agentsFetchedAt = state.fleet.fetchedAt;
+    p.error = null;
+    renderProductivityAgentOptions();
+    renderProductivityStatus();
+    return;
+  }
+
+  const gen = ++p.loadGen;
+  p.agentsLoading = true;
+  p.error = null;
+  const select = document.getElementById("productivity-agent");
+  if (select && !p.agents.length) {
+    select.innerHTML = `<option value="">Loading computers…</option>`;
+  }
+  renderProductivityStatus();
+  try {
+    const payload = await fetchJson(platformUrl("/api/v1/fleet", { limit: 200, offset: 0, sort: "hostname" }));
+    if (gen !== p.loadGen) return;
+    p.agents = payload.items || [];
+    if (!p.agentId && p.agents.length === 1) {
+      p.agentId = p.agents[0].agent_id;
+    }
+    p.error = null;
+    p.agentsFetchedAt = Date.now();
+  } catch (error) {
+    if (gen !== p.loadGen) return;
+    p.agents = [];
+    p.error = error.message || "Failed to load computers.";
+  } finally {
+    if (gen !== p.loadGen) return;
+    p.agentsLoading = false;
+    renderProductivityAgentOptions();
+    renderProductivityStatus();
+  }
+}
+
+function productivityReportQueryKey() {
+  const p = state.productivity;
+  return stableQueryKey({
+    agent_id: p.agentId,
+    ...applicationActivityTimeQuery(),
+  });
+}
+
+async function loadProductivityReport({ force = false, silent = false } = {}) {
+  const p = state.productivity;
+  if (!p.agentId) {
+    p.report = null;
+    renderProductivityReport();
+    renderProductivityStatus();
+    return;
+  }
+  const queryKey = productivityReportQueryKey();
+  if (!force && !p.loading && queryKey === p.reportQueryKey && p.report && state.view === "productivity") {
+    renderProductivityReport();
+    renderProductivityStatus();
+    return;
+  }
+  if (p.loading && queryKey === p.reportQueryKey) return;
+
+  const gen = ++p.reportGen;
+  p.loading = true;
+  p.error = null;
+  if (!silent) {
+    renderProductivityStatus();
+    renderProductivityReport();
+  }
+  try {
+    const payload = await fetchJson(
+      platformUrl("/api/v1/reports/productivity", {
+        agent_id: p.agentId,
+        ...applicationActivityTimeQuery(),
+      })
+    );
+    if (gen !== p.reportGen) return;
+    p.report = payload;
+    p.error = null;
+    p.reportQueryKey = queryKey;
+  } catch (error) {
+    if (gen !== p.reportGen) return;
+    p.report = null;
+    p.error = error.message || "Failed to load productivity report.";
+  } finally {
+    if (gen !== p.reportGen) return;
+    p.loading = false;
+    if (state.view === "productivity") {
+      renderProductivityStatus();
+      renderProductivityReport();
+    }
+  }
+}
+
+async function loadProductivityPage({ force = false, silent = false } = {}) {
+  await loadProductivityAgents({ force });
+  if (state.productivity.agentId) {
+    await loadProductivityReport({ force, silent });
+  } else {
+    renderProductivityReport();
+  }
+}
+
+function productivityCsvEscape(value) {
+  const text = String(value ?? "");
+  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function exportProductivityExcel() {
+  const report = state.productivity.report;
+  if (!report || report.empty) return;
+  const lines = [];
+  lines.push("Section,Field,Value");
+  lines.push(`Employee,Computer,${productivityCsvEscape(report.employee?.computer)}`);
+  lines.push(`Employee,User,${productivityCsvEscape(report.employee?.user)}`);
+  lines.push(`Employee,Department,${productivityCsvEscape(report.employee?.department || "")}`);
+  lines.push(`Summary,Working Time,${productivityCsvEscape(report.summary?.working_time)}`);
+  lines.push(`Summary,Active Time,${productivityCsvEscape(report.summary?.active_time)}`);
+  lines.push(`Summary,Idle Time,${productivityCsvEscape(report.summary?.idle_time)}`);
+  lines.push(`Summary,Applications Used,${productivityCsvEscape(report.summary?.applications_used)}`);
+  lines.push(`Summary,Websites Visited,${productivityCsvEscape(report.summary?.websites_visited)}`);
+  lines.push(
+    `Summary,Average Session Length,${productivityCsvEscape(report.summary?.average_session_length)}`
+  );
+  lines.push("");
+  lines.push("Application,Total Time,Percentage,Launch Count");
+  for (const row of report.applications || []) {
+    lines.push(
+      [
+        productivityCsvEscape(row.application),
+        productivityCsvEscape(row.total_time),
+        productivityCsvEscape(row.percentage),
+        productivityCsvEscape(row.launch_count),
+      ].join(",")
+    );
+  }
+  lines.push("");
+  lines.push("Website,Total Time,Visits");
+  for (const row of report.websites || []) {
+    lines.push(
+      [
+        productivityCsvEscape(row.website),
+        productivityCsvEscape(row.total_time),
+        productivityCsvEscape(row.visits),
+      ].join(",")
+    );
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const computer = (report.employee?.computer || "report").replace(/[^\w.-]+/g, "_");
+  link.href = url;
+  link.download = `productivity-report-${computer}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function printProductivityReport() {
+  window.print();
+}
+
+document.getElementById("productivity-filters")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  state.productivity.agentId = document.getElementById("productivity-agent").value.trim();
+  state.productivity.reportQueryKey = "";
+  loadProductivityReport({ force: true });
+});
+document.getElementById("productivity-refresh")?.addEventListener("click", () => loadProductivityPage({ force: true }));
+document.getElementById("productivity-export-excel")?.addEventListener("click", () => exportProductivityExcel());
+document.getElementById("productivity-export-pdf")?.addEventListener("click", () => printProductivityReport());
+document.getElementById("productivity-print")?.addEventListener("click", () => printProductivityReport());
+
+function geolocationQueryKey() {
+  return stableQueryKey(geolocationQueryParams());
+}
+
+function renderGeolocationFromCache({ refreshMap = true } = {}) {
+  renderGeolocationSummary();
+  renderGeolocationStatus();
+  renderGeolocationTable();
+  renderGeolocationDetail();
+  if (refreshMap) {
+    ensureGeolocationMap();
+    renderGeolocationMap();
+  } else {
+    ensureGeolocationMap();
+    window.requestAnimationFrame(() => state.geolocation.map?.invalidateSize());
+  }
+}
+
+function geolocationQueryParams() {
+  const g = state.geolocation;
+  return {
+    q: g.q,
+    status: g.status,
+    country: g.country,
+    city: g.city,
+    isp: g.isp,
+  };
+}
+
+function geolocationFingerprint(payload) {
+  return JSON.stringify(payload?.items || []);
+}
+
+function renderGeolocationSummary() {
+  const summary = state.geolocation.summary || {};
+  document.getElementById("geo-card-managed").textContent = formatNumber(summary.managed_devices ?? 0);
+  document.getElementById("geo-card-online").textContent = formatNumber(summary.online_devices ?? 0);
+  document.getElementById("geo-card-countries").textContent = formatNumber(summary.countries ?? 0);
+  document.getElementById("geo-card-cities").textContent = formatNumber(summary.cities ?? 0);
+}
+
+function renderGeolocationStatus() {
+  const el = document.getElementById("geolocation-status");
+  if (!el) return;
+  const g = state.geolocation;
+  if (g.loading) {
+    el.textContent = "Loading endpoint locations…";
+    return;
+  }
+  if (g.error) {
+    el.textContent = g.error;
+    return;
+  }
+  const total = g.items.length;
+  el.textContent = total
+    ? `${total.toLocaleString()} device${total === 1 ? "" : "s"} with location information. Auto-refresh every 30 seconds.`
+    : "No managed devices with location information.";
+}
+
+function formatGeoStatus(status, online) {
+  if (online || status === "online") {
+    return '<span class="geo-status geo-status-online">Online</span>';
+  }
+  return '<span class="geo-status geo-status-offline">Offline</span>';
+}
+
+function renderGeolocationTable() {
+  const body = document.getElementById("geolocation-body");
+  if (!body) return;
+  const g = state.geolocation;
+  if (g.loading && !g.items.length) {
+    body.innerHTML =
+      '<tr><td colspan="10" class="py-8 text-center text-mist-400">Loading endpoint locations…</td></tr>';
+    return;
+  }
+  if (!g.items.length) {
+    body.innerHTML =
+      '<tr><td colspan="10" class="py-8 text-center text-mist-400">No managed devices with location information.</td></tr>';
+    return;
+  }
+  body.innerHTML = g.items
+    .map(
+      (item) => `
+      <tr class="geo-row${g.selectedId === item.agent_id ? " geo-row-selected" : ""}" data-agent-id="${escapeHtml(item.agent_id)}">
+        <td class="py-2.5 pr-3 font-medium">${displayValue(item.computer)}</td>
+        <td class="py-2.5 pr-3">${displayValue(item.user)}</td>
+        <td class="py-2.5 pr-3">${formatGeoStatus(item.status, item.online)}</td>
+        <td class="py-2.5 pr-3">${displayValue(item.city)}</td>
+        <td class="py-2.5 pr-3">${displayValue(item.state)}</td>
+        <td class="py-2.5 pr-3">${displayValue(item.country)}</td>
+        <td class="py-2.5 pr-3 font-mono text-xs">${displayValue(item.public_ip)}</td>
+        <td class="py-2.5 pr-3">${displayValue(item.isp)}</td>
+        <td class="py-2.5 pr-3 font-mono text-xs">${displayValue(item.timezone)}</td>
+        <td class="py-2.5 whitespace-nowrap">${formatRelativeLastSeen(item.last_seen)}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+function geolocationPopupHtml(item) {
+  return `
+    <div class="geo-popup">
+      <div class="geo-popup-title">${displayValue(item.computer)}</div>
+      <dl class="geo-popup-list">
+        <div><dt>User</dt><dd>${displayValue(item.user)}</dd></div>
+        <div><dt>City</dt><dd>${displayValue(item.city)}</dd></div>
+        <div><dt>Country</dt><dd>${displayValue(item.country)}</dd></div>
+        <div><dt>ISP</dt><dd>${displayValue(item.isp)}</dd></div>
+        <div><dt>Public IP</dt><dd>${displayValue(item.public_ip)}</dd></div>
+        <div><dt>Latitude</dt><dd>${displayValue(item.latitude)}</dd></div>
+        <div><dt>Longitude</dt><dd>${displayValue(item.longitude)}</dd></div>
+        <div><dt>Last Seen</dt><dd>${formatRelativeLastSeen(item.last_seen)}</dd></div>
+      </dl>
+    </div>`;
+}
+
+function ensureGeolocationMap() {
+  const g = state.geolocation;
+  if (g.map || typeof window.L === "undefined") return g.map;
+  const container = document.getElementById("geolocation-map");
+  if (!container) return null;
+  const map = window.L.map(container, {
+    center: [20, 0],
+    zoom: 2,
+    minZoom: 2,
+    worldCopyJump: true,
+  });
+  window.L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; CARTO',
+    subdomains: "abcd",
+    maxZoom: 19,
+  }).addTo(map);
+  g.map = map;
+  return map;
+}
+
+function renderGeolocationMap() {
+  const g = state.geolocation;
+  const map = ensureGeolocationMap();
+  if (!map) return;
+
+  for (const marker of g.markers) {
+    map.removeLayer(marker);
+  }
+  g.markers = [];
+
+  const online = g.items.filter(
+    (item) =>
+      item.online &&
+      Number.isFinite(Number(item.latitude)) &&
+      Number.isFinite(Number(item.longitude))
+  );
+  for (const item of online) {
+    const marker = window.L.circleMarker([Number(item.latitude), Number(item.longitude)], {
+      radius: 10,
+      color: "#e8eef4",
+      fillColor: "#3ddc97",
+      fillOpacity: 0.9,
+      weight: 2,
+    });
+    marker.bindPopup(geolocationPopupHtml(item));
+    marker.on("click", () => selectGeolocationDevice(item.agent_id));
+    marker.addTo(map);
+    g.markers.push(marker);
+  }
+
+  if (online.length === 1) {
+    map.setView([Number(online[0].latitude), Number(online[0].longitude)], 8, { animate: false });
+  } else if (online.length > 1) {
+    const bounds = window.L.latLngBounds(
+      online.map((item) => [Number(item.latitude), Number(item.longitude)])
+    );
+    map.fitBounds(bounds.pad(0.25), { animate: false, maxZoom: 6 });
+  } else {
+    map.setView([20, 0], 2, { animate: false });
+  }
+
+  window.requestAnimationFrame(() => map.invalidateSize());
+}
+
+function renderGeolocationDetail() {
+  const panel = document.getElementById("geolocation-detail");
+  const body = document.getElementById("geolocation-detail-body");
+  if (!panel || !body) return;
+  const item = state.geolocation.selected;
+  if (!item) {
+    panel.classList.add("hidden");
+    body.innerHTML = "";
+    return;
+  }
+  panel.classList.remove("hidden");
+  const rows = [
+    ["User", item.user],
+    ["Hostname", item.hostname || item.computer],
+    ["Public IP", item.public_ip],
+    ["Private IP", item.private_ip],
+    ["Country", item.country],
+    ["State", item.state],
+    ["City", item.city],
+    ["Latitude", item.latitude],
+    ["Longitude", item.longitude],
+    ["Timezone", item.timezone],
+    ["ISP", item.isp],
+    ["ASN", item.asn],
+    ["Last Seen", formatRelativeLastSeen(item.last_seen)],
+    ["Operating System", item.operating_system],
+  ];
+  body.innerHTML = rows
+    .map(
+      ([label, value]) =>
+        `<div class="geo-detail-row"><dt>${escapeHtml(label)}</dt><dd>${displayValue(value)}</dd></div>`
+    )
+    .join("");
+}
+
+function selectGeolocationDevice(agentId) {
+  const g = state.geolocation;
+  g.selectedId = agentId;
+  g.selected = g.items.find((item) => item.agent_id === agentId) || null;
+  renderGeolocationTable();
+  renderGeolocationDetail();
+}
+
+async function loadGeolocation({ silent = false, force = false } = {}) {
+  const g = state.geolocation;
+  const queryKey = geolocationQueryKey();
+  if (!force && g.loading && queryKey === g.queryKey) return;
+
+  const gen = ++g.loadGen;
+  if (!silent) {
+    g.loading = true;
+    g.error = null;
+    renderGeolocationStatus();
+    if (!g.items.length) {
+      renderGeolocationTable();
+    }
+  }
+  try {
+    const payload = await fetchJson(platformUrl("/api/v1/geolocation", geolocationQueryParams()));
+    if (gen !== g.loadGen) return;
+    const fingerprint = geolocationFingerprint(payload);
+    if (!force && silent && fingerprint === g.lastFingerprint) {
+      g.fetchedAt = Date.now();
+      g.error = null;
+      return;
+    }
+    if (fingerprint !== g.lastFingerprint || !silent || force) {
+      g.summary = payload.summary || g.summary;
+      g.items = payload.items || [];
+      g.lastFingerprint = fingerprint;
+      if (g.selectedId) {
+        g.selected = g.items.find((item) => item.agent_id === g.selectedId) || null;
+        if (!g.selected) g.selectedId = null;
+      }
+      if (state.view === "geolocation") {
+        renderGeolocationFromCache({ refreshMap: true });
+      }
+    }
+    g.error = null;
+    g.queryKey = queryKey;
+    g.fetchedAt = Date.now();
+  } catch (error) {
+    if (gen !== g.loadGen) return;
+    if (!silent) {
+      g.error = error.message || "Failed to load geolocation data.";
+      g.items = [];
+      renderGeolocationTable();
+      renderGeolocationMap();
+    }
+  } finally {
+    if (gen !== g.loadGen) return;
+    if (!silent) g.loading = false;
+    if (state.view === "geolocation") {
+      renderGeolocationStatus();
+    }
+  }
+}
+
+function stopGeolocationAutoRefresh() {
+  const g = state.geolocation;
+  if (g.refreshTimer) {
+    clearInterval(g.refreshTimer);
+    g.refreshTimer = null;
+  }
+}
+
+function startGeolocationAutoRefresh() {
+  const g = state.geolocation;
+  stopGeolocationAutoRefresh();
+  g.refreshTimer = setInterval(() => {
+    if (state.view === "geolocation") {
+      loadGeolocation({ silent: true });
+    }
+  }, 30000);
+}
+
+async function loadGeolocationPage({ force = false, silent = false } = {}) {
+  syncGeolocationFilterFields();
+  const g = state.geolocation;
+  const queryKey = geolocationQueryKey();
+  if (
+    !force &&
+    queryKey === g.queryKey &&
+    isCacheFresh(g.fetchedAt) &&
+    state.view === "geolocation"
+  ) {
+    renderGeolocationFromCache({ refreshMap: false });
+    startGeolocationAutoRefresh();
+    return;
+  }
+  await loadGeolocation({ silent, force });
+  startGeolocationAutoRefresh();
+}
+
+function syncGeolocationFilterFields() {
+  const g = state.geolocation;
+  const search = document.getElementById("geo-search");
+  const status = document.getElementById("geo-status");
+  const country = document.getElementById("geo-country");
+  const city = document.getElementById("geo-city");
+  const isp = document.getElementById("geo-isp");
+  if (search) search.value = g.q;
+  if (status) status.value = g.status;
+  if (country) country.value = g.country;
+  if (city) city.value = g.city;
+  if (isp) isp.value = g.isp;
+}
+
+document.getElementById("geolocation-filters")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const g = state.geolocation;
+  g.q = document.getElementById("geo-search").value.trim();
+  g.status = document.getElementById("geo-status").value.trim();
+  g.country = document.getElementById("geo-country").value.trim();
+  g.city = document.getElementById("geo-city").value.trim();
+  g.isp = document.getElementById("geo-isp").value.trim();
+  loadGeolocation({ force: true });
+});
+document.getElementById("geolocation-clear-filters")?.addEventListener("click", () => {
+  const g = state.geolocation;
+  g.q = "";
+  g.status = "";
+  g.country = "";
+  g.city = "";
+  g.isp = "";
+  document.getElementById("geo-search").value = "";
+  document.getElementById("geo-status").value = "";
+  document.getElementById("geo-country").value = "";
+  document.getElementById("geo-city").value = "";
+  document.getElementById("geo-isp").value = "";
+  loadGeolocation({ force: true });
+});
+document.getElementById("geolocation-refresh")?.addEventListener("click", () => loadGeolocation({ force: true }));
+document.getElementById("geolocation-body")?.addEventListener("click", (event) => {
+  const row = event.target.closest(".geo-row");
+  if (!row) return;
+  selectGeolocationDevice(row.dataset.agentId);
+});
+document.getElementById("geolocation-detail-close")?.addEventListener("click", () => {
+  state.geolocation.selectedId = null;
+  state.geolocation.selected = null;
+  renderGeolocationTable();
+  renderGeolocationDetail();
+});
+
+applyAppHash();
 bindApplicationActivityTimeFilter();

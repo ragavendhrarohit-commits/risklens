@@ -25,10 +25,10 @@ def test_sessions_and_application_activity_use_fleet_routes() -> None:
     assert "Computer → Session → Account" in js
     assert "/api/v1/fleet/${encodeURIComponent(f.selectedId)}/sessions" in js
     assert "/api/v1/fleet/${encodeURIComponent(f.selectedId)}/applications" in js
-    assert "/api/v1/fleet/${encodeURIComponent(f.selectedId)}/website-usage" in js
-    assert "/api/v1/fleet/${encodeURIComponent(f.selectedId)}/browser" not in js
-    assert "function renderWebsiteUsageTable" in js
-    assert "Total Time Spent" in js
+    assert "/api/v1/fleet/${encodeURIComponent(f.selectedId)}/browser-activity" in js
+    assert "/api/v1/fleet/${encodeURIComponent(f.selectedId)}/browser`" not in js
+    assert "function renderBrowserActivityTable" in js
+    assert "Total Time" in js
     assert (
         "Browser Activity is website usage on this computer during a session. Collectors are not implemented."
         not in js

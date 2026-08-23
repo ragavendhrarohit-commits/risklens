@@ -13,7 +13,6 @@ RESERVED = (
     "alerts",
     "incidents",
     "rules",
-    "timeline",
     "reports",
     "ai",
     "groups",
@@ -25,6 +24,7 @@ REMOVED = (
     "files",
     "scheduled_tasks",
     "startup",
+    "timeline",
 )
 
 
@@ -55,7 +55,15 @@ def test_dead_pre_fleet_views_removed() -> None:
     assert 'id="view-locations"' not in html
     assert 'id="view-data-sources"' not in html
     assert "PlatformApiService" not in js
-    assert 'id="view-groups"' in html
+    assert 'id="view-groups"' not in html
+    assert 'id="view-alerts"' not in html
+    assert 'id="view-incidents"' not in html
+    assert 'id="view-policies"' not in html
+    assert 'id="view-administration"' not in html
     assert 'id="view-fleet"' in html
     assert 'id="view-users"' in html
     assert 'id="view-software"' in html
+    assert 'id="view-geolocation"' in html
+    assert 'id="view-settings"' in html
+    assert 'id="view-productivity"' in html
+    assert 'id="view-reports"' not in html

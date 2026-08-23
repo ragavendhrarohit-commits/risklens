@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
 from app.config import Settings
 from app.dependencies import get_settings_dep
@@ -80,6 +80,7 @@ def register_agent(
 def post_heartbeat(
     agent_id: UUID,
     payload: AgentHeartbeatRequest,
+    request: Request,
     service: HeartbeatService = Depends(get_heartbeat_service),
     settings: Settings = Depends(get_settings_dep),
 ) -> AgentHeartbeatResponse:
@@ -88,7 +89,7 @@ def post_heartbeat(
         agent_id=str(agent_id),
         payload=payload.model_dump(mode="json"),
     )
-    stored = service.record(agent_id, payload.to_command())
+    stored = service.record(agent_id, payload.to_command(), client_ip=_client_ip(request))
     return AgentHeartbeatResponse(
         accepted=True,
         agent_id=stored.agent_id,
@@ -97,3 +98,14 @@ def post_heartbeat(
         server_time=datetime.now(timezone.utc),
         received_at=stored.received_at,
     )
+
+
+def _client_ip(request: Request) -> str | None:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        candidate = forwarded.split(",")[0].strip()
+        if candidate:
+            return candidate
+    if request.client is None:
+        return None
+    return request.client.host

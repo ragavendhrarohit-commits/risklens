@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, inspect
 from app.infrastructure.postgres.models import Base
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HEAD = "0008_browser_activity"
+EXPECTED_HEAD = "0010_heartbeat_health_metrics"
 
 EXPECTED_COLUMNS = {
     "agent_id",
@@ -102,6 +102,7 @@ EXPECTED_HEARTBEAT_COLUMNS = {
     "heartbeat_time",
     "received_at",
     "status",
+    "health_metrics",
 }
 
 

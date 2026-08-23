@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 SESSION_STATUS_ACTIVE = "active"
@@ -135,6 +135,44 @@ def session_is_immutable(status: str, logoff_at: datetime | None) -> bool:
     return logoff_at is not None
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def can_reopen_closed_session(
+    existing: ComputerSession,
+    incoming: ComputerSession,
+    *,
+    known_sessions: list[ComputerSession] | list | None = None,
+) -> bool:
+    """Allow reopen when the agent reports the same Windows logon as still active.
+
+    Offline reconciliation may close a session while the user is still logged in.
+    Only the chronologically latest session for an agent may reopen — older closed
+    rows stay historical even if an ACTIVE heartbeat is replayed.
+    """
+    if existing.status != SESSION_STATUS_CLOSED and existing.logoff_at is None:
+        return False
+    if incoming.status != SESSION_STATUS_ACTIVE:
+        return False
+    if incoming.logoff_at is not None:
+        return False
+    if _as_utc(existing.logon_at) != _as_utc(incoming.logon_at):
+        return False
+    if known_sessions:
+        existing_logon = _as_utc(existing.logon_at)
+        for other in known_sessions:
+            other_id = getattr(other, "session_id", None)
+            if other_id == existing.session_id:
+                continue
+            other_logon = getattr(other, "logon_at", None)
+            if other_logon is not None and _as_utc(other_logon) > existing_logon:
+                return False
+    return True
+
+
 def cap_logoff_at(
     logon_at: datetime,
     requested: datetime,
@@ -192,16 +230,29 @@ def merge_session(
     existing: ComputerSession | None,
     incoming: ComputerSession,
     next_logon_at: datetime | None = None,
+    *,
+    known_sessions: list[ComputerSession] | list | None = None,
 ) -> ComputerSession:
     """Idempotent agent upsert.
 
-    - Never reopen a closed session.
     - Keep the original login time. Never invent a login timestamp.
-    - Once CLOSED, logout_time, duration, and status are immutable.
+    - Closed sessions are immutable unless the agent reports the same latest logon as ACTIVE.
     - Next-login / offline close is a fallback only while the row is Active.
     """
     if existing is None:
         return incoming
+    if can_reopen_closed_session(existing, incoming, known_sessions=known_sessions):
+        return ComputerSession(
+            session_id=existing.session_id,
+            agent_id=existing.agent_id,
+            username=incoming.username or existing.username,
+            account_sid=incoming.account_sid or existing.account_sid,
+            logon_at=existing.logon_at,
+            logoff_at=None,
+            status=SESSION_STATUS_ACTIVE,
+            collected_at=incoming.collected_at,
+            received_at=incoming.received_at,
+        )
     if session_is_immutable(existing.status, existing.logoff_at):
         return existing
     logon_at = existing.logon_at

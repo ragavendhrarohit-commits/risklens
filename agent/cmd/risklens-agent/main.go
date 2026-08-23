@@ -17,7 +17,6 @@ import (
 	idstorage "risklens/agent/internal/identity/storage"
 	"risklens/agent/internal/logging"
 	"risklens/agent/internal/modules/activity"
-	"risklens/agent/internal/modules/browseractivity"
 	"risklens/agent/internal/modules/device"
 	"risklens/agent/internal/modules/deviceupload"
 	"risklens/agent/internal/modules/heartbeat"
@@ -48,9 +47,6 @@ func main() {
 func run(args []string) int {
 	if len(args) > 0 && args[0] == "--activity-foreground" {
 		return activity.RunForegroundHelper()
-	}
-	if browseractivity.IsNativeHostInvocation(args) {
-		return browseractivity.RunNativeHost()
 	}
 	bootstrap := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
@@ -314,26 +310,6 @@ func buildModules(cfg model.Config, idMgr *idmanager.Manager, base, logger *slog
 		logger.Error("activity module disabled", "error", err)
 	} else {
 		modules = append(modules, act)
-	}
-
-	br, err := browseractivity.New(
-		browseractivity.Config{
-			Enabled:             cfg.BrowserActivity.Enabled,
-			BackendURL:          cfg.Networking.BackendURL,
-			Timeout:             cfg.BrowserActivity.Timeout,
-			Interval:            cfg.BrowserActivity.Interval,
-			StateDir:            cfg.Storage.StateDir,
-			ChromiumExtensionID: cfg.BrowserActivity.ChromiumExtensionID,
-			FirefoxExtensionID:  cfg.BrowserActivity.FirefoxExtensionID,
-		},
-		idMgr,
-		version.Version,
-		base,
-	)
-	if err != nil {
-		logger.Error("browser activity module disabled", "error", err)
-	} else {
-		modules = append(modules, br)
 	}
 
 	return modules

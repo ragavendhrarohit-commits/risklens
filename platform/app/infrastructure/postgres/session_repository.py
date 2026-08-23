@@ -14,6 +14,7 @@ from app.domain.sessions import (
     ListSessionsQuery,
     SessionPage,
     SessionRecord,
+    can_reopen_closed_session,
     parse_sort,
     session_duration_seconds,
     session_is_immutable,
@@ -92,7 +93,22 @@ class PostgresSessionRepository(SessionRepository):
                         session.add(row)
                         count += 1
                         rows_affected = 1
-                    elif session_is_immutable(existing.status, existing.logoff_at):
+                    elif session_is_immutable(existing.status, existing.logoff_at) and not (
+                        can_reopen_closed_session(
+                            ComputerSession(
+                                session_id=existing.session_id,
+                                agent_id=existing.agent_id,
+                                username=existing.username,
+                                account_sid=existing.account_sid,
+                                logon_at=existing.logon_at,
+                                logoff_at=existing.logoff_at,
+                                status=existing.status,
+                                collected_at=existing.collected_at,
+                                received_at=existing.received_at,
+                            ),
+                            item,
+                        )
+                    ):
                         rows_affected = 0
                     else:
                         for key, value in values.items():
@@ -161,10 +177,44 @@ class PostgresSessionRepository(SessionRepository):
             target = session.get(ComputerSessionRow, incoming.session_id)
             inserted = 0
             updated = 0
+            known = [
+                ComputerSession(
+                    session_id=row.session_id,
+                    agent_id=row.agent_id,
+                    username=row.username,
+                    account_sid=row.account_sid,
+                    logon_at=row.logon_at,
+                    logoff_at=row.logoff_at,
+                    status=row.status,
+                    collected_at=row.collected_at,
+                    received_at=row.received_at,
+                )
+                for row in session.scalars(
+                    select(ComputerSessionRow).where(
+                        ComputerSessionRow.agent_id == incoming.agent_id
+                    )
+                ).all()
+            ]
             if target is None:
                 session.add(ComputerSessionRow.from_domain(incoming))
                 inserted = 1
-            elif session_is_immutable(target.status, target.logoff_at):
+            elif session_is_immutable(target.status, target.logoff_at) and not (
+                can_reopen_closed_session(
+                    ComputerSession(
+                        session_id=target.session_id,
+                        agent_id=target.agent_id,
+                        username=target.username,
+                        account_sid=target.account_sid,
+                        logon_at=target.logon_at,
+                        logoff_at=target.logoff_at,
+                        status=target.status,
+                        collected_at=target.collected_at,
+                        received_at=target.received_at,
+                    ),
+                    incoming,
+                    known_sessions=known,
+                )
+            ):
                 pass
             else:
                 incoming_row = ComputerSessionRow.from_domain(incoming)

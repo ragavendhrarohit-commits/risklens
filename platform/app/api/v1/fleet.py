@@ -10,7 +10,6 @@ from app.domain.fleet import (
     DEFAULT_LIMIT,
     DEFAULT_SORT,
     MAX_LIMIT,
-    NOT_IMPLEMENTED,
     FleetRecord,
     InvalidFleetQueryError,
     ListFleetQuery,
@@ -26,18 +25,21 @@ from app.schemas.applications import (
 from app.schemas.errors import ErrorEnvelope
 from app.schemas.sessions import SessionItemResponse, SessionListResponse
 from app.schemas.fleet import (
+    BrowserActivityItemResponse,
+    BrowserActivityListResponse,
+    BrowserVisitResponse,
+    FleetDiskHealthResponse,
     FleetHealthResponse,
     FleetItemResponse,
     FleetListResponse,
-    FleetPolicyResponse,
+    FleetMemoryHealthResponse,
     FleetSummaryResponse,
-    FleetTimelineResponse,
     WebsiteUsageItemResponse,
     WebsiteUsageListResponse,
 )
+from app.services.fleet_service import BROWSER_ACTIVITY_DEFAULT_SORT, FleetService
 from app.schemas.software import SoftwareItemResponse, SoftwareListResponse
 from app.schemas.users import UserItemResponse, UserListResponse
-from app.services.fleet_service import FleetService
 
 router = APIRouter()
 
@@ -326,6 +328,70 @@ def list_fleet_website_usage(
 
 
 @router.get(
+    "/{agent_id}/browser-activity",
+    response_model=BrowserActivityListResponse,
+    summary="Browser Activity summary grouped by website and browser",
+    responses={404: {"model": ErrorEnvelope}, 422: {"model": ErrorEnvelope}},
+)
+def list_fleet_browser_activity(
+    agent_id: UUID,
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    sort: str = Query(default=BROWSER_ACTIVITY_DEFAULT_SORT, max_length=64),
+    started_at_from: datetime | None = Query(default=None),
+    started_at_to: datetime | None = Query(default=None),
+    service: FleetService = Depends(get_fleet_service),
+) -> BrowserActivityListResponse:
+    try:
+        page = service.browser_activity(
+            agent_id,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            started_at_from=started_at_from,
+            started_at_to=started_at_to,
+        )
+    except ValueError as exc:
+        raise InvalidFleetQueryError(str(exc)) from exc
+    return BrowserActivityListResponse(
+        items=[
+            BrowserActivityItemResponse(
+                website=item.website,
+                browser=item.browser,
+                page_title=item.page_title,
+                duration_seconds=item.duration_seconds,
+                total_time=item.total_time,
+                visits=item.visits,
+                last_visited=item.last_visited,
+                status=item.status,
+                timeline=[
+                    BrowserVisitResponse(
+                        started_at=visit.started_at,
+                        stopped_at=visit.stopped_at,
+                        duration_seconds=visit.duration_seconds,
+                        status=visit.status,
+                        page_title=visit.page_title or visit.window_title,
+                        window_title=visit.window_title,
+                        website=visit.website,
+                        browser=visit.browser,
+                    )
+                    for visit in item.timeline
+                ],
+            )
+            for item in page.items
+        ],
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+        total_browser_time_seconds=page.total_browser_time_seconds,
+        total_browser_time=page.total_browser_time,
+        websites_visited=page.websites_visited,
+        active_website=page.active_website,
+        active_browser=page.active_browser,
+    )
+
+
+@router.get(
     "/{agent_id}/health",
     response_model=FleetHealthResponse,
     summary="Agent health for Fleet",
@@ -341,52 +407,34 @@ def get_fleet_health(
         heartbeat_age_seconds=health.heartbeat_age_seconds,
         last_inventory_at=health.last_inventory_at,
         last_communication_at=health.last_communication_at,
-        cpu_usage=health.cpu_usage,
-        memory_usage=health.memory_usage,
-        disk_usage=health.disk_usage,
+        cpu_percent=health.cpu_percent,
+        cpu_model=health.cpu_model,
+        logical_cpus=health.logical_cpus,
+        physical_cores=health.physical_cores,
+        memory=(
+            None
+            if health.memory is None
+            else FleetMemoryHealthResponse(
+                total=health.memory.total,
+                used=health.memory.used,
+                free=health.memory.free,
+                percent=health.memory.percent,
+            )
+        ),
+        disks=[
+            FleetDiskHealthResponse(
+                name=disk.name,
+                total=disk.total,
+                used=disk.used,
+                free=disk.free,
+                percent=disk.percent,
+            )
+            for disk in health.disks
+        ],
         memory_bytes=health.memory_bytes,
         disk_total_bytes=health.disk_total_bytes,
         disk_free_bytes=health.disk_free_bytes,
     )
-
-
-@router.get(
-    "/{agent_id}/policy",
-    response_model=FleetPolicyResponse,
-    summary="Assigned agent policy (read-only)",
-    responses={404: {"model": ErrorEnvelope}},
-)
-def get_fleet_policy(
-    agent_id: UUID,
-    service: FleetService = Depends(get_fleet_service),
-) -> FleetPolicyResponse:
-    policy = service.policy(agent_id)
-    return FleetPolicyResponse(
-        id=policy.id,
-        name=policy.name,
-        heartbeat_interval_seconds=policy.heartbeat_interval_seconds,
-        collect_devices=policy.collect_devices,
-        collect_users=policy.collect_users,
-        collect_software=policy.collect_software,
-        collect_processes=policy.collect_processes,
-        collect_services=policy.collect_services,
-        collect_event_logs=policy.collect_event_logs,
-        created_at=policy.created_at,
-    )
-
-
-@router.get(
-    "/{agent_id}/timeline",
-    response_model=FleetTimelineResponse,
-    summary="Agent timeline (not implemented)",
-    responses={404: {"model": ErrorEnvelope}},
-)
-def get_fleet_timeline(
-    agent_id: UUID,
-    service: FleetService = Depends(get_fleet_service),
-) -> FleetTimelineResponse:
-    service.require_agent(agent_id)
-    return FleetTimelineResponse(status=NOT_IMPLEMENTED)
 
 
 @router.get(

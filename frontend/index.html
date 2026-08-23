@@ -40,7 +40,13 @@
         },
       };
     </script>
-    <link rel="stylesheet" href="/assets/app.css" />
+    <link rel="stylesheet" href="/assets/app.css?v=geo-drawer-zindex-1" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
     <script>
       // Platform API base (Sprint 10). Override before app.js if needed.
       window.RISKLENS_PLATFORM_API =
@@ -77,28 +83,13 @@
                 </button>
               </li>
               <li>
-                <button data-view="alerts" class="nav-link">
-                  <span>Alerts</span>
-                </button>
-              </li>
-              <li>
-                <button data-view="incidents" class="nav-link">
-                  <span>Incidents</span>
-                </button>
-              </li>
-              <li>
                 <button data-view="reports" class="nav-link">
                   <span>Reports</span>
                 </button>
               </li>
               <li>
-                <button data-view="policies" class="nav-link">
-                  <span>Policies</span>
-                </button>
-              </li>
-              <li>
-                <button data-view="administration" class="nav-link">
-                  <span>Administration</span>
+                <button data-view="geolocation" class="nav-link">
+                  <span>Geo Location</span>
                 </button>
               </li>
               <li>
@@ -111,12 +102,12 @@
         </nav>
 
         <div class="px-4 py-4 border-t border-ink-600 text-[11px] text-mist-400 leading-relaxed">
-          Company → Groups → Computer. Fleet is the center of the platform.
+          Fleet is the center of the platform.
         </div>
       </aside>
 
       <div class="flex-1 min-w-0 flex flex-col">
-        <header class="h-14 shrink-0 border-b border-ink-600 bg-ink-900/80 px-5 flex items-center gap-4 relative z-20">
+        <header class="app-topbar h-14 shrink-0 border-b border-ink-600 bg-ink-900/80 px-5 flex items-center gap-4">
           <form id="global-search-form" class="flex-1 max-w-xl">
             <label class="sr-only" for="global-search">Global search</label>
             <input
@@ -393,41 +384,44 @@
               <h1 class="text-xl font-semibold mt-3" id="fleet-detail-title">Agent</h1>
               <p class="text-sm text-mist-400 mt-1 font-mono" id="fleet-detail-subtitle"></p>
             </div>
-            <div id="fleet-detail-tabs" class="mb-4 space-y-3">
-              <div class="fleet-tab-group" data-group="inventory">
-                <p class="fleet-tab-group-label">Inventory</p>
-                <div class="flex flex-wrap gap-1">
-                  <button type="button" class="fleet-tab fleet-tab-active" data-tab="overview">Overview</button>
-                  <button type="button" class="fleet-tab" data-tab="accounts">Accounts</button>
-                  <button type="button" class="fleet-tab" data-tab="software">Installed Applications</button>
-                  <button type="button" class="fleet-tab" data-tab="processes">Processes</button>
-                  <button type="button" class="fleet-tab" data-tab="services">Services</button>
-                  <button type="button" class="fleet-tab" data-tab="network">Network</button>
-                  <button type="button" class="fleet-tab" data-tab="policies">Policies</button>
-                  <button type="button" class="fleet-tab" data-tab="health">Health</button>
+            <div id="fleet-detail-error" class="device-error hidden mb-3"></div>
+            <div id="fleet-detail-shell" class="fleet-detail-shell">
+              <nav id="fleet-detail-nav" class="fleet-detail-nav" aria-label="Computer details">
+                <div class="fleet-nav-group" data-group="inventory">
+                  <p class="fleet-nav-group-label">Inventory</p>
+                  <ul class="fleet-nav-list">
+                    <li>
+                      <button type="button" class="fleet-nav-item fleet-nav-item-active" data-tab="overview">
+                        Overview
+                      </button>
+                    </li>
+                    <li>
+                      <button type="button" class="fleet-nav-item" data-tab="accounts">Accounts</button>
+                    </li>
+                    <li>
+                      <button type="button" class="fleet-nav-item" data-tab="software">Installed Applications</button>
+                    </li>
+                  </ul>
                 </div>
-              </div>
-              <div class="fleet-tab-group" data-group="activity">
-                <p class="fleet-tab-group-label">Activity</p>
-                <div class="flex flex-wrap gap-1">
-                  <button type="button" class="fleet-tab" data-tab="sessions">Sessions</button>
-                  <button type="button" class="fleet-tab" data-tab="applications">Application Activity</button>
-                  <button type="button" class="fleet-tab" data-tab="browser">Browser Activity</button>
-                  <button type="button" class="fleet-tab" data-tab="timeline">Timeline</button>
+                <div class="fleet-nav-group" data-group="activity">
+                  <p class="fleet-nav-group-label">Activity</p>
+                  <ul class="fleet-nav-list">
+                    <li>
+                      <button type="button" class="fleet-nav-item" data-tab="sessions">Sessions</button>
+                    </li>
+                    <li>
+                      <button type="button" class="fleet-nav-item" data-tab="applications">Applications</button>
+                    </li>
+                    <li>
+                      <button type="button" class="fleet-nav-item" data-tab="browser">Browser</button>
+                    </li>
+                  </ul>
                 </div>
-              </div>
-              <div class="fleet-tab-group" data-group="security">
-                <p class="fleet-tab-group-label">Security</p>
-                <div class="flex flex-wrap gap-1">
-                  <button type="button" class="fleet-tab" data-tab="alerts">Alerts</button>
-                  <button type="button" class="fleet-tab" data-tab="detections">Detections</button>
-                  <button type="button" class="fleet-tab" data-tab="response">Response Actions</button>
-                  <button type="button" class="fleet-tab" data-tab="threat-timeline">Threat Timeline</button>
-                </div>
+              </nav>
+              <div id="fleet-detail-body" class="fleet-detail-content panel text-sm text-mist-300">
+                Select an endpoint.
               </div>
             </div>
-            <div id="fleet-detail-error" class="device-error hidden mb-3"></div>
-            <div id="fleet-detail-body" class="panel text-sm text-mist-300">Select an endpoint.</div>
           </section>
 
           <section id="view-software" class="view hidden">
@@ -518,81 +512,155 @@
             </div>
           </section>
 
-          <section id="view-groups" class="view hidden">
-            <p class="text-[11px] uppercase tracking-wide text-mist-400 mb-1">Administration</p>
-            <h1 class="text-xl font-semibold mb-2">Groups</h1>
-            <p class="text-sm text-mist-400 max-w-2xl mb-4">
-              Reserved for Company → Groups → Computers. Group membership is not implemented in this sprint.
-            </p>
-            <div class="panel text-sm text-mist-400 py-6 text-center">Not implemented yet.</div>
-          </section>
+          <section id="view-geolocation" class="view hidden">
+            <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h1 class="text-xl font-semibold">Geo Location</h1>
+                <p class="text-sm text-mist-400 mt-1">
+                  Approximate endpoint locations from public IP addresses. No GPS or browser tracking.
+                </p>
+              </div>
+              <button
+                type="button"
+                id="geolocation-refresh"
+                class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-100 hover:border-signal"
+              >
+                Refresh
+              </button>
+            </div>
 
-          <section id="view-alerts" class="view hidden">
-            <h1 class="text-xl font-semibold mb-2">Alerts</h1>
-            <p class="text-sm text-mist-400 max-w-2xl mb-4">
-              Company-wide alerts will attach to one computer. Detections are not implemented in this sprint.
-            </p>
-            <div class="panel text-sm text-mist-400 py-6 text-center">Not implemented yet.</div>
-          </section>
-
-          <section id="view-incidents" class="view hidden">
-            <h1 class="text-xl font-semibold mb-2">Incidents</h1>
-            <p class="text-sm text-mist-400 max-w-2xl mb-4">
-              Reserved for investigation cases that attach to one or more computers. No incident workflow in this sprint.
-            </p>
-            <div class="panel text-sm text-mist-400 py-6 text-center">Not implemented yet.</div>
-          </section>
-
-          <section id="view-policies" class="view hidden">
-            <h1 class="text-xl font-semibold mb-2">Policies</h1>
-            <p class="text-sm text-mist-400 max-w-2xl mb-4">
-              Company policy catalog. Assigned policy is already visible on Fleet and Computer Detail. Remote policy push is not implemented.
-            </p>
-            <div class="panel text-sm text-mist-400 py-6 text-center">Not implemented yet.</div>
-          </section>
-
-          <section id="view-reports" class="view hidden">
-            <h1 class="text-xl font-semibold mb-2">Reports</h1>
-            <p class="text-sm text-mist-400 max-w-2xl mb-4">
-              Company inventory and future usage reports. Account and Software inventory stay available here. They are not primary navigation.
-            </p>
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              <article class="panel">
-                <h2 class="text-sm font-semibold mb-2">Account Inventory</h2>
-                <p class="text-sm text-mist-400 mb-3">Windows accounts across every computer. Same Sprint 12 API.</p>
-                <button type="button" class="inventory-link" data-open-view="users" data-view="users">Open inventory</button>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <article class="stat-card">
+                <div class="stat-label">Managed Devices</div>
+                <div class="stat-value" id="geo-card-managed">—</div>
               </article>
-              <article class="panel">
-                <h2 class="text-sm font-semibold mb-2">Software Inventory</h2>
-                <p class="text-sm text-mist-400 mb-3">Installed software across every computer. Same Sprint 12 API.</p>
-                <button type="button" class="inventory-link" data-open-view="software" data-view="software">Open inventory</button>
+              <article class="stat-card">
+                <div class="stat-label">Online Devices</div>
+                <div class="stat-value" id="geo-card-online">—</div>
               </article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Application Usage</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Website Usage</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Computer Usage</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Compliance</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Security</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Productivity</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+              <article class="stat-card">
+                <div class="stat-label">Countries</div>
+                <div class="stat-value" id="geo-card-countries">—</div>
+              </article>
+              <article class="stat-card">
+                <div class="stat-label">Cities</div>
+                <div class="stat-value" id="geo-card-cities">—</div>
+              </article>
+            </div>
+
+            <form id="geolocation-filters" class="panel mb-4 grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+              <div class="md:col-span-2">
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="geo-search">Search</label>
+                <input id="geo-search" name="q" type="search" class="device-input" placeholder="Computer, user, country, city, IP" />
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="geo-status">Status</label>
+                <select id="geo-status" name="status" class="device-input">
+                  <option value="">Any</option>
+                  <option value="online">Online</option>
+                  <option value="offline">Offline</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="geo-country">Country</label>
+                <input id="geo-country" name="country" type="search" class="device-input" placeholder="Country" />
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="geo-city">City</label>
+                <input id="geo-city" name="city" type="search" class="device-input" placeholder="City" />
+              </div>
+              <div>
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="geo-isp">ISP</label>
+                <input id="geo-isp" name="isp" type="search" class="device-input" placeholder="ISP" />
+              </div>
+              <div class="flex gap-2 md:col-span-6">
+                <button type="submit" class="h-9 px-4 rounded-md bg-signal/15 border border-signal/40 text-sm text-signal hover:bg-signal/25">
+                  Apply
+                </button>
+                <button type="button" id="geolocation-clear-filters" class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-300">
+                  Clear
+                </button>
+              </div>
+            </form>
+
+            <div id="geolocation-status" class="text-xs text-mist-400 mb-3" aria-live="polite"></div>
+
+            <div class="geo-layout">
+              <div class="geo-table-wrap panel overflow-x-auto">
+                <table class="w-full text-sm geo-table">
+                  <thead class="text-left text-mist-400 text-xs uppercase tracking-wide">
+                    <tr>
+                      <th class="py-2 pr-3 font-medium">Computer</th>
+                      <th class="py-2 pr-3 font-medium">User</th>
+                      <th class="py-2 pr-3 font-medium">Status</th>
+                      <th class="py-2 pr-3 font-medium">City</th>
+                      <th class="py-2 pr-3 font-medium">State</th>
+                      <th class="py-2 pr-3 font-medium">Country</th>
+                      <th class="py-2 pr-3 font-medium">Public IP</th>
+                      <th class="py-2 pr-3 font-medium">ISP</th>
+                      <th class="py-2 pr-3 font-medium">Timezone</th>
+                      <th class="py-2 font-medium">Last Seen</th>
+                    </tr>
+                  </thead>
+                  <tbody id="geolocation-body" class="divide-y divide-ink-600">
+                    <tr>
+                      <td colspan="10" class="py-8 text-center text-mist-400">
+                        Open Geo Location to view managed endpoints on the map.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="geo-map-wrap panel p-0 overflow-hidden">
+                <div id="geolocation-map" class="geo-map" aria-label="Endpoint world map"></div>
+              </div>
             </div>
           </section>
 
-          <section id="view-administration" class="view hidden">
-            <h1 class="text-xl font-semibold mb-2">Administration</h1>
-            <p class="text-sm text-mist-400 max-w-2xl mb-4">
-              Company operators, roles, groups, and agent operations. Reserved only. No administration APIs in this sprint.
-            </p>
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Users</h2><p class="text-sm text-mist-400">Platform operators. Not Windows accounts. Not implemented yet.</p></article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Roles</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
-              <article class="panel">
-                <h2 class="text-sm font-semibold mb-2">Groups</h2>
-                <p class="text-sm text-mist-400 mb-3">Company → Groups → Computers. Reserved.</p>
-                <button type="button" class="inventory-link" data-open-view="groups" data-view="groups">Open Groups</button>
-              </article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Policies</h2><p class="text-sm text-mist-400">Catalog is visible on Fleet. Administration editing is not implemented.</p></article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Agent Downloads</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">API Keys</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
-              <article class="panel"><h2 class="text-sm font-semibold mb-2">Audit Logs</h2><p class="text-sm text-mist-400">Not implemented yet.</p></article>
+          <section id="view-productivity" class="view hidden">
+            <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <p class="text-[11px] uppercase tracking-wide text-mist-400 mb-1">Reports</p>
+                <h1 class="text-xl font-semibold">Productivity Report</h1>
+                <p class="text-sm text-mist-400 mt-1">
+                  Manager summary of how an employee spent the selected period. Uses existing Application Activity data and the Global Time Filter.
+                </p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 print:hidden">
+                <button type="button" id="productivity-export-pdf" class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-100 hover:border-signal">
+                  Export PDF
+                </button>
+                <button type="button" id="productivity-export-excel" class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-100 hover:border-signal">
+                  Export Excel
+                </button>
+                <button type="button" id="productivity-print" class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-100 hover:border-signal">
+                  Print Report
+                </button>
+                <button type="button" id="productivity-refresh" class="h-9 px-3 rounded-md border border-ink-600 bg-ink-800 text-sm text-mist-100 hover:border-signal">
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            <form id="productivity-filters" class="panel mb-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-end print:hidden">
+              <div class="md:col-span-2">
+                <label class="block text-[11px] uppercase tracking-wide text-mist-400 mb-1" for="productivity-agent">Computer</label>
+                <select id="productivity-agent" name="agent_id" class="device-input">
+                  <option value="">Select a computer…</option>
+                </select>
+              </div>
+              <div class="flex gap-2">
+                <button type="submit" class="h-9 flex-1 rounded-md bg-signal/15 border border-signal/40 text-sm text-signal hover:bg-signal/25">
+                  Generate report
+                </button>
+              </div>
+            </form>
+
+            <div id="productivity-status" class="text-xs text-mist-400 mb-3" aria-live="polite"></div>
+            <div id="productivity-report" class="space-y-4">
+              <div class="panel text-sm text-mist-400 py-6 text-center">
+                Select a computer and generate a report for the current Global Time Filter range.
+              </div>
             </div>
           </section>
 
@@ -604,10 +672,23 @@
             <div class="panel text-sm text-mist-400 py-6 text-center">Not implemented yet.</div>
           </section>
         </main>
+
+        <aside id="geolocation-detail" class="geo-detail hidden" aria-label="Device location details">
+          <div class="geo-detail-header">
+            <h2 class="text-sm font-semibold">Computer Information</h2>
+            <button type="button" id="geolocation-detail-close" class="geo-detail-close" aria-label="Close details">×</button>
+          </div>
+          <dl id="geolocation-detail-body" class="geo-detail-body"></dl>
+        </aside>
       </div>
     </div>
     <script src="/assets/global-time-filter.js"></script>
     <script src="/assets/global-time-picker.js"></script>
-    <script src="/assets/app.js"></script>
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/assets/app.js?v=geo-drawer-offset-1"></script>
   </body>
 </html>

@@ -9,13 +9,14 @@ from app.domain.fleet import (
     DEFAULT_WINDOWS_POLICY_NAME,
     NOT_IMPLEMENTED,
     FleetAgentNotFoundError,
+    FleetDiskHealth,
     FleetHealth,
+    FleetMemoryHealth,
     FleetOnlineStatus,
     FleetPage,
     FleetRecord,
     FleetSummary,
     ListFleetQuery,
-    Policy,
     compute_fleet_status,
     parse_sort,
 )
@@ -23,11 +24,20 @@ from app.domain.applications import (
     MAX_LIMIT as APPLICATION_MAX_LIMIT,
     ApplicationActivityPage,
     ListApplicationActivityQuery,
+    parse_sort as parse_application_sort,
 )
-from app.domain.website_usage import WebsiteUsageRow, summarize_website_usage
 from app.domain.sessions import ListSessionsQuery, SessionPage
 from app.domain.software import ListSoftwareQuery, SoftwarePage
 from app.domain.user import ListUsersQuery, UserPage
+from app.domain.website_usage import (
+    BrowserActivitySummary,
+    WebsiteUsageRow,
+    browser_activity_overview,
+    browser_activity_segments,
+    format_total_time,
+    summarize_browser_activity,
+    summarize_website_usage,
+)
 from app.logging.setup import get_logger
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.device_inventory_repository import DeviceInventoryRepository
@@ -43,6 +53,11 @@ from app.services.software_service import SoftwareInventoryService
 from app.services.user_service import UserInventoryService
 
 _logger = get_logger("risklens.fleet")
+
+BROWSER_ACTIVITY_DEFAULT_SORT = "-duration_seconds"
+BROWSER_ACTIVITY_SORT_FIELDS = frozenset(
+    {"duration_seconds", "last_visited", "website", "visits", "browser"}
+)
 
 
 class FleetProjection:
@@ -171,9 +186,13 @@ class FleetService:
             )
         )
 
-    def website_usage(self, agent_id: UUID) -> list[WebsiteUsageRow]:
-        """Summarize website time from existing Application Activity window titles."""
-        self._require_agent(agent_id)
+    def _application_records(
+        self,
+        agent_id: UUID,
+        *,
+        started_at_from: datetime | None = None,
+        started_at_to: datetime | None = None,
+    ) -> list:
         records = []
         offset = 0
         while True:
@@ -183,38 +202,111 @@ class FleetService:
                     limit=APPLICATION_MAX_LIMIT,
                     offset=offset,
                     sort="-started_at",
+                    started_at_from=started_at_from,
+                    started_at_to=started_at_to,
                 )
             )
             records.extend(page.items)
             offset += len(page.items)
             if not page.items or offset >= page.total:
                 break
-        return summarize_website_usage(records)
+        return records
+
+    def website_usage(self, agent_id: UUID) -> list[WebsiteUsageRow]:
+        """Summarize website time from existing Application Activity window titles."""
+        self._require_agent(agent_id)
+        return summarize_website_usage(self._application_records(agent_id))
+
+    def browser_activity(
+        self,
+        agent_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        sort: str,
+        started_at_from: datetime | None = None,
+        started_at_to: datetime | None = None,
+    ) -> BrowserActivitySummary:
+        """Manager summary of existing Browser Activity segments, grouped by website."""
+        self._require_agent(agent_id)
+        if limit < 1 or limit > APPLICATION_MAX_LIMIT:
+            raise ValueError(f"limit must be between 1 and {APPLICATION_MAX_LIMIT}")
+        if offset < 0:
+            raise ValueError("offset must be >= 0")
+        field, descending = parse_application_sort(sort or BROWSER_ACTIVITY_DEFAULT_SORT)
+        if field not in BROWSER_ACTIVITY_SORT_FIELDS:
+            raise ValueError(f"unsupported sort field: {field}")
+        segments = browser_activity_segments(
+            self._application_records(
+                agent_id,
+                started_at_from=started_at_from,
+                started_at_to=started_at_to,
+            )
+        )
+        items = summarize_browser_activity(segments)
+        items.sort(
+            key=lambda row: (
+                getattr(row, field),
+                row.duration_seconds,
+                row.website,
+                row.browser,
+            ),
+            reverse=descending,
+        )
+        active_website, active_browser, websites_visited = browser_activity_overview(segments)
+        total_seconds = sum(row.duration_seconds for row in items)
+        total = len(items)
+        return BrowserActivitySummary(
+            items=items[offset : offset + limit],
+            total=total,
+            limit=limit,
+            offset=offset,
+            sort=sort or BROWSER_ACTIVITY_DEFAULT_SORT,
+            total_browser_time_seconds=total_seconds,
+            total_browser_time=format_total_time(total_seconds),
+            websites_visited=websites_visited,
+            active_website=active_website,
+            active_browser=active_browser,
+        )
 
     def health(self, agent_id: UUID) -> FleetHealth:
         record = self.get(agent_id)
+        latest = self._heartbeats.get_latest(agent_id)
+        metrics = latest.health if latest is not None else None
+        memory = None
+        disks: tuple[FleetDiskHealth, ...] = ()
+        if metrics is not None:
+            memory = FleetMemoryHealth(
+                total=metrics.memory.total,
+                used=metrics.memory.used,
+                free=metrics.memory.free,
+                percent=metrics.memory.percent,
+            )
+            disks = tuple(
+                FleetDiskHealth(
+                    name=disk.name,
+                    total=disk.total,
+                    used=disk.used,
+                    free=disk.free,
+                    percent=disk.percent,
+                )
+                for disk in metrics.disks
+            )
         return FleetHealth(
             status=record.online_status,
             heartbeat_age_seconds=record.heartbeat_age_seconds,
             last_inventory_at=record.last_inventory_at,
             last_communication_at=record.last_communication_at,
-            cpu_usage=NOT_IMPLEMENTED,
-            memory_usage=NOT_IMPLEMENTED,
-            disk_usage=NOT_IMPLEMENTED,
+            cpu_percent=None if metrics is None else metrics.cpu_percent,
+            cpu_model=None if metrics is None else metrics.cpu_model,
+            logical_cpus=None if metrics is None else metrics.logical_cpus,
+            physical_cores=None if metrics is None else metrics.physical_cores,
+            memory=memory,
+            disks=disks,
             memory_bytes=record.memory_bytes,
             disk_total_bytes=record.disk_total_bytes,
             disk_free_bytes=record.disk_free_bytes,
         )
-
-    def policy(self, agent_id: UUID) -> Policy:
-        self._require_agent(agent_id)
-        assignment = self._policies.get_assignment(agent_id)
-        if assignment is not None:
-            return assignment.policy
-        default = self._policies.get_default_policy()
-        if default is None:
-            raise FleetAgentNotFoundError(agent_id)
-        return default
 
     def require_agent(self, agent_id: UUID) -> None:
         self._require_agent(agent_id)

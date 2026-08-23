@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1 import agents, applications, browser, devices, fleet, health, root, sessions, software, users, version
+from app.api.v1 import agents, applications, browser, devices, fleet, geolocation, health, reports, root, sessions, software, users, version
 
 
 def build_api_router() -> APIRouter:
@@ -19,8 +19,10 @@ def build_api_router() -> APIRouter:
     router.include_router(applications.router, prefix="/api/v1/applications", tags=["applications"])
     router.include_router(browser.router, prefix="/api/v1/browser", tags=["browser"])
     router.include_router(fleet.router, prefix="/api/v1/fleet", tags=["fleet"])
+    router.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
+    router.include_router(geolocation.router, prefix="/api/v1/geolocation", tags=["geolocation"])
 
     # Reserved prefixes (not mounted): activity, network, alerts,
-    # incidents, rules, timeline, reports, ai, groups, administration.
+    # incidents, rules, timeline, ai, groups, administration.
 
     return router

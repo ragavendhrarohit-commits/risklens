@@ -172,14 +172,34 @@ class FleetPage:
 
 
 @dataclass(frozen=True, slots=True)
+class FleetMemoryHealth:
+    total: int
+    used: int
+    free: int
+    percent: float
+
+
+@dataclass(frozen=True, slots=True)
+class FleetDiskHealth:
+    name: str
+    total: int
+    used: int
+    free: int
+    percent: float
+
+
+@dataclass(frozen=True, slots=True)
 class FleetHealth:
     status: str
     heartbeat_age_seconds: int | None
     last_inventory_at: datetime | None
     last_communication_at: datetime | None
-    cpu_usage: str = NOT_IMPLEMENTED
-    memory_usage: str = NOT_IMPLEMENTED
-    disk_usage: str = NOT_IMPLEMENTED
+    cpu_percent: float | None = None
+    cpu_model: str | None = None
+    logical_cpus: int | None = None
+    physical_cores: int | None = None
+    memory: FleetMemoryHealth | None = None
+    disks: tuple[FleetDiskHealth, ...] = ()
     memory_bytes: int | None = None
     disk_total_bytes: int | None = None
     disk_free_bytes: int | None = None
