@@ -263,6 +263,7 @@ def _register_services(
             lambda _c: MemoryGeolocationRepository(),
         )
         container.register_instance(StubGeoLookupProvider, StubGeoLookupProvider())
+        container.register_instance(IpApiGeoLookupProvider, IpApiGeoLookupProvider())
         logger.info("repositories bound to memory")
 
     container.register_factory(
@@ -376,6 +377,7 @@ def _register_services(
 
 
 def _resolve_lookup(container: Container, settings: Settings):
-    if settings.repository_backend is RepositoryBackend.postgres:
-        return container.resolve(IpApiGeoLookupProvider)
-    return container.resolve(StubGeoLookupProvider)
+    # Prefer live IP lookup for both postgres and memory so Geo Location
+    # works in local console runs. Stub remains registered for unit tests.
+    _ = settings
+    return container.resolve(IpApiGeoLookupProvider)
